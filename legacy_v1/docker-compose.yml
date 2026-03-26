@@ -1,0 +1,12 @@
+services:
+  bot:
+    build: .
+    container_name: kakoito-bot
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    ports:
+      - "8080:8080"
+    restart: unless-stopped

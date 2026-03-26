@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+.env
+go/bin/
+.DS_Store
+data/
+release_v2_remote.tar.gz
+deploy_v2_remote.py
