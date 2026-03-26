@@ -254,6 +254,40 @@ class AdaptiveDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
                 await db.close()
 
+    async def test_mark_ref_rewarded_refreshes_user_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            sqlite_path = Path(tmp) / "legacy.db"
+            sqlite_path.touch()
+
+            fake_pg = AsyncMock()
+            fake_pg.pool = object()
+            fake_pg.get_meta = AsyncMock(return_value={"completed": True})
+
+            with (
+                patch("db.adaptive_database.Config.DATABASE_URL", "postgresql://test"),
+                patch("db.adaptive_database.Config.DATABASE_MIN_POOL", 1),
+                patch("db.adaptive_database.Config.DATABASE_MAX_POOL", 2),
+                patch("db.adaptive_database.PostgresDatabase", return_value=fake_pg),
+                patch("db.adaptive_database.apply_postgres_migrations", new=AsyncMock(return_value=[])),
+            ):
+                from db.adaptive_database import Database
+
+                db = Database(str(sqlite_path))
+                await db.connect()
+
+                db.legacy.mark_ref_rewarded = AsyncMock(return_value=True)
+                db.legacy.get_user = AsyncMock(return_value={"user_id": 5, "ref_rewarded": 1, "ref_by": 9})
+
+                meta_repo = AsyncMock()
+                user_repo = AsyncMock()
+                db._meta_repo = lambda: meta_repo  # type: ignore[method-assign]
+                db._user_repo = lambda: user_repo  # type: ignore[method-assign]
+
+                self.assertTrue(await db.mark_ref_rewarded(5))
+                meta_repo.set_legacy_payload.assert_awaited_once()
+
+                await db.close()
+
     async def test_promo_code_is_mirrored_and_can_be_read_from_postgres_meta(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             sqlite_path = Path(tmp) / "legacy.db"

@@ -6,12 +6,12 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from config import Config
 from db import Database
-from services.panel import PanelAPI
-from services.subscriptions import (
+from kkbot.services.subscriptions import (
     create_subscription,
     get_remaining_active_days,
     reward_referrer_percent,
 )
+from services.panel import PanelAPI
 from tariffs import format_duration, format_traffic, get_by_id
 from utils.helpers import notify_admins, notify_user
 from utils.onboarding import onboarding_keyboard, onboarding_text

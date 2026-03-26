@@ -249,6 +249,66 @@ class Database:
             await self._sync_legacy_user_payload(user_id)
         return updated
 
+    async def delete_user_everywhere(self, user_id: int) -> dict[str, int]:
+        stats = await self.legacy.delete_user_everywhere(user_id)
+        if self.postgres is not None and self.postgres.pool is not None:
+            async with self.postgres.pool.acquire() as conn:
+                async with conn.transaction():
+                    ticket_ids = await conn.fetch(
+                        "SELECT id FROM support_tickets WHERE user_id = $1",
+                        int(user_id),
+                    )
+                    payment_ids = await conn.fetch(
+                        "SELECT payment_id FROM payment_intents WHERE user_id = $1 OR COALESCE(recipient_user_id, 0) = $1",
+                        int(user_id),
+                    )
+                    payment_id_values = [str(row["payment_id"]) for row in payment_ids]
+                    ticket_id_values = [int(row["id"]) for row in ticket_ids]
+
+                    if ticket_id_values:
+                        await conn.execute("DELETE FROM support_messages WHERE ticket_id = ANY($1::bigint[])", ticket_id_values)
+                    if payment_id_values:
+                        await conn.execute("DELETE FROM payment_status_history WHERE payment_id = ANY($1::text[])", payment_id_values)
+                        await conn.execute("DELETE FROM payment_admin_actions WHERE payment_id = ANY($1::text[])", payment_id_values)
+                        await conn.execute("DELETE FROM payment_event_dedup WHERE payment_id = ANY($1::text[])", payment_id_values)
+                        await conn.execute("DELETE FROM legacy_payment_intents_archive WHERE payment_id = ANY($1::text[])", payment_id_values)
+
+                    await conn.execute("DELETE FROM support_tickets WHERE user_id = $1", int(user_id))
+                    await conn.execute("DELETE FROM withdraw_requests WHERE user_id = $1", int(user_id))
+                    await conn.execute("DELETE FROM payment_intents WHERE user_id = $1 OR COALESCE(recipient_user_id, 0) = $1", int(user_id))
+                    await conn.execute("DELETE FROM subscriptions WHERE user_id = $1", int(user_id))
+                    await conn.execute("DELETE FROM antifraud_events WHERE user_id = $1", int(user_id))
+                    await conn.execute("DELETE FROM admin_user_actions WHERE user_id = $1 OR admin_user_id = $1", int(user_id))
+                    await conn.execute("DELETE FROM ref_history WHERE user_id = $1 OR ref_user_id = $1", int(user_id))
+                    await conn.execute(
+                        "DELETE FROM legacy_support_tickets_archive WHERE COALESCE(NULLIF(payload->>'user_id', ''), '0')::bigint = $1",
+                        int(user_id),
+                    )
+                    await conn.execute(
+                        "DELETE FROM legacy_support_messages_archive WHERE COALESCE(NULLIF(payload->>'sender_user_id', ''), '0')::bigint = $1",
+                        int(user_id),
+                    )
+                    await conn.execute(
+                        "DELETE FROM legacy_withdraw_requests_archive WHERE COALESCE(NULLIF(payload->>'user_id', ''), '0')::bigint = $1",
+                        int(user_id),
+                    )
+                    await conn.execute("DELETE FROM legacy_users_archive WHERE user_id = $1", int(user_id))
+                    await conn.execute("DELETE FROM bot_users WHERE user_id = $1", int(user_id))
+                    await conn.execute("DELETE FROM app_meta WHERE key = ANY($1::text[])", [
+                        f"legacy_setting:promo:active:{int(user_id)}",
+                        f"legacy_setting:support:blocked_until:{int(user_id)}",
+                        f"legacy_setting:support:block_reason:{int(user_id)}",
+                        f"legacy_setting:gift:note:{int(user_id)}",
+                        f"legacy_payload:legacy_user:{int(user_id)}",
+                    ])
+        return stats
+
+    async def mark_ref_rewarded(self, user_id: int) -> bool:
+        updated = await self.legacy.mark_ref_rewarded(user_id)
+        if updated:
+            await self._sync_legacy_user_payload(user_id)
+        return updated
+
     async def add_ref_history(self, user_id: int, ref_user_id: int, amount: float = 0, bonus_days: int = 0) -> None:
         await self.legacy.add_ref_history(user_id, ref_user_id, amount, bonus_days)
         repo = self._referral_repo()

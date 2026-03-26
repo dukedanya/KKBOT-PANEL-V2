@@ -484,7 +484,7 @@ async def remind_unclaimed_gift_links_job(ctx: BackgroundContext) -> None:
 
 async def check_expiry_notifications(ctx: BackgroundContext) -> None:
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-    from services.subscriptions import get_subscription_status
+    from kkbot.services.subscriptions import get_subscription_status
     from utils.helpers import notify_user
 
     kb_renew = InlineKeyboardMarkup(

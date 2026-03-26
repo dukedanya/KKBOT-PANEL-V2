@@ -92,7 +92,7 @@ async def get_total_traffic_snapshot_for_user(user_id: int, db: Database) -> Opt
         return None
 
     try:
-        from services.subscriptions import panel_base_email
+        from kkbot.services.subscriptions import panel_base_email
 
         base_email = await panel_base_email(user_id, db)
         users = state.get("users") or []

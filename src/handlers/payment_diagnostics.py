@@ -12,6 +12,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from config import Config
 from db import Database
 from keyboards import main_menu_keyboard
+from kkbot.services.subscriptions import panel_base_email
 from services.yookassa import YooKassaAPI
 from kkbot.services.subscriptions import revoke_subscription
 from services.payment_attention_resolver import auto_resolve_payment_attention
@@ -568,10 +569,11 @@ async def _build_admin_dashboard_text(db: Database, panel=None, payment_gateway=
     return (
         "🧭 <b>Админ дашборд</b>\n\n"
         "<b>Навигация</b>\n"
+        "👥 Пользователи: карточки, поддержка, ограничения, выводы\n"
         "💳 Платежи: статусы, pending, диагностика, действия\n"
-        "📈 Аналитика: ежедневные/периодные отчёты, воронки\n"
-        "📣 Рассылки: массовые уведомления и продления\n"
-        "⚙️ Сервис: тарифы, шаблоны, служебные настройки\n\n"
+        "📈 Аналитика: отчёты, health, рефералка, инциденты\n"
+        "📝 Контент: тарифы, промокоды, шаблоны, рассылки\n"
+        "⚙️ Система: панель, safe mode, Stars, служебные настройки\n\n"
         "<b>Платежи</b>\n"
         f"🏦 Активный провайдер: <b>{PROVIDER_LABELS.get(provider, provider)}</b>\n"
         f"📈 Всего: <b>{int(current_row.get('total', 0) or 0)}</b>\n"
@@ -1073,7 +1075,17 @@ def _user_card_keyboard(user_id: int, *, banned: bool = False, support_blocked: 
                 InlineKeyboardButton(text="🕓 История", callback_data=f"admin:usercard:timeline:{user_id}"),
                 InlineKeyboardButton(text="📜 Тикеты", callback_data=f"admin:usercard:tickets:{user_id}"),
             ],
+            [InlineKeyboardButton(text="🗑 Удалить пользователя", callback_data=f"admin:usercard:delete_prompt:{user_id}")],
             [InlineKeyboardButton(text="⬅️ К сервису", callback_data="adminmenu:service")],
+        ]
+    )
+
+
+def _user_delete_confirm_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⚠️ Да, удалить полностью", callback_data=f"admin:usercard:delete_confirm:{user_id}")],
+            [InlineKeyboardButton(text="⬅️ К карточке", callback_data=f"admin:usercard:{user_id}")],
         ]
     )
 
@@ -1544,6 +1556,67 @@ async def admin_user_card_reset_notifications(callback: CallbackQuery, db: Datab
             support_blocked=bool(restriction.get("active")),
         ),
     )
+
+
+@router.callback_query(F.data.startswith("admin:usercard:delete_prompt:"))
+async def admin_user_card_delete_prompt(callback: CallbackQuery, db: Database):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Недостаточно прав", show_alert=True)
+        return
+    user_id = int(callback.data.split(":")[-1])
+    user = await db.get_user(user_id)
+    if not user:
+        await callback.answer("Пользователь не найден", show_alert=True)
+        return
+    base_email = await panel_base_email(user_id, db)
+    text = (
+        "🗑 <b>Удаление пользователя</b>\n\n"
+        f"Пользователь: <code>{user_id}</code>\n"
+        f"Panel email: <code>{escape(base_email or '-')}</code>\n\n"
+        "Будет удалён из бота, PostgreSQL/SQLite и из панели 3x-ui.\n"
+        "Действие необратимо."
+    )
+    await smart_edit_message(
+        callback.message,
+        text,
+        parse_mode="HTML",
+        reply_markup=_user_delete_confirm_keyboard(user_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:usercard:delete_confirm:"))
+async def admin_user_card_delete_confirm(callback: CallbackQuery, db: Database, panel):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Недостаточно прав", show_alert=True)
+        return
+    user_id = int(callback.data.split(":")[-1])
+    base_email = await panel_base_email(user_id, db)
+    panel_deleted = False
+    panel_error = ""
+    if base_email:
+        try:
+            panel_deleted = await panel.delete_client(base_email)
+        except Exception as exc:
+            panel_error = str(exc)
+            logger.error("User delete: panel cleanup failed user=%s error=%s", user_id, exc)
+
+    stats = await db.delete_user_everywhere(user_id)
+    text = (
+        "✅ <b>Пользователь удалён</b>\n\n"
+        f"User ID: <code>{user_id}</code>\n"
+        f"Panel cleanup: <b>{'ok' if panel_deleted else 'not found / skipped'}</b>\n"
+        f"Удалено записей в БД: <b>{int(stats.get('deleted', 0))}</b>"
+    )
+    if panel_error:
+        text += f"\nОшибка панели: <code>{escape(panel_error[:300])}</code>"
+    await smart_edit_message(
+        callback.message,
+        text,
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ К сервису", callback_data="adminmenu:service")]]),
+    )
+    await callback.answer("Пользователь удалён")
 
 
 @router.callback_query(F.data.startswith("admin:usercard:support_menu:"))

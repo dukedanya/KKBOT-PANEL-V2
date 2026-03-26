@@ -42,12 +42,16 @@ async def note_trial_abuse(user_id: int, db: Database, reason: str, bot: Optiona
 async def evaluate_referral_link(user_id: int, referrer_id: int, db: Database, bot: Optional[Bot] = None) -> tuple[bool, str]:
     if user_id == referrer_id:
         await db.add_antifraud_event(user_id, "self_referral_attempt", details="self-referral blocked", severity="high")
-        if hasattr(db, "mark_referral_suspicious"):
-            await db.mark_referral_suspicious(user_id, True, "Попытка self-referral")
         return False, "self_referral"
 
     referrer = await db.get_user(referrer_id)
-    if referrer and int(referrer.get("ref_suspicious", 0) or 0) == 1:
+    referrer_note = str((referrer or {}).get("partner_note") or "").strip().lower()
+    hard_suspicious_referrer = (
+        bool(referrer)
+        and int(referrer.get("ref_suspicious", 0) or 0) == 1
+        and "self-referral" not in referrer_note
+    )
+    if hard_suspicious_referrer:
         await db.add_antifraud_event(
             user_id,
             "referral_from_suspicious_referrer",

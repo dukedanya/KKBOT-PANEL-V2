@@ -1023,6 +1023,111 @@ class Database:
             notified_1h=0,
         )
 
+    async def delete_user_everywhere(self, user_id: int) -> dict[str, int]:
+        if not self.conn:
+            return {"deleted": 0}
+        stats: dict[str, int] = {}
+        async with self.lock:
+            ticket_ids: list[int] = []
+            payment_ids: list[str] = []
+
+            async with self.conn.execute(
+                "SELECT id FROM support_tickets WHERE user_id = ?",
+                (user_id,),
+            ) as cursor:
+                ticket_ids = [int(row[0]) for row in await cursor.fetchall()]
+
+            async with self.conn.execute(
+                "SELECT payment_id FROM pending_payments WHERE user_id = ? OR COALESCE(recipient_user_id, 0) = ?",
+                (user_id, user_id),
+            ) as cursor:
+                payment_ids = [str(row[0]) for row in await cursor.fetchall()]
+
+            if ticket_ids:
+                placeholders = ",".join("?" for _ in ticket_ids)
+                cursor = await self.conn.execute(
+                    f"DELETE FROM support_messages WHERE ticket_id IN ({placeholders})",
+                    ticket_ids,
+                )
+                stats["support_messages"] = cursor.rowcount
+                cursor = await self.conn.execute(
+                    f"DELETE FROM app_settings WHERE key IN ({','.join('?' for _ in ticket_ids)})",
+                    [f"support:ticket_reminder_sent:{ticket_id}" for ticket_id in ticket_ids],
+                )
+                stats["ticket_reminders"] = cursor.rowcount
+
+            for table, query, params in [
+                ("support_tickets", "DELETE FROM support_tickets WHERE user_id = ?", (user_id,)),
+                ("withdraw_requests", "DELETE FROM withdraw_requests WHERE user_id = ?", (user_id,)),
+                ("ref_history_owned", "DELETE FROM ref_history WHERE user_id = ? OR ref_user_id = ?", (user_id, user_id)),
+                ("antifraud_events", "DELETE FROM antifraud_events WHERE user_id = ?", (user_id,)),
+                ("referral_balance_adjustments", "DELETE FROM referral_balance_adjustments WHERE user_id = ? OR admin_user_id = ?", (user_id, user_id)),
+                ("referral_partner_settings", "DELETE FROM referral_partner_settings WHERE user_id = ?", (user_id,)),
+                ("admin_user_actions", "DELETE FROM admin_user_actions WHERE user_id = ? OR admin_user_id = ?", (user_id, user_id)),
+                ("promo_code_usages", "DELETE FROM promo_code_usages WHERE user_id = ?", (user_id,)),
+                ("gift_links", "DELETE FROM gift_links WHERE buyer_user_id = ? OR COALESCE(claimed_by_user_id, 0) = ?", (user_id, user_id)),
+                ("transient_messages", "DELETE FROM transient_messages WHERE chat_id = ?", (user_id,)),
+            ]:
+                cursor = await self.conn.execute(query, params)
+                stats[table] = cursor.rowcount
+
+            if payment_ids:
+                placeholders = ",".join("?" for _ in payment_ids)
+                cursor = await self.conn.execute(
+                    f"DELETE FROM payment_status_history WHERE payment_id IN ({placeholders})",
+                    payment_ids,
+                )
+                stats["payment_status_history"] = cursor.rowcount
+                cursor = await self.conn.execute(
+                    f"DELETE FROM payment_admin_actions WHERE payment_id IN ({placeholders})",
+                    payment_ids,
+                )
+                stats["payment_admin_actions"] = cursor.rowcount
+                cursor = await self.conn.execute(
+                    f"DELETE FROM payment_event_dedup WHERE payment_id IN ({placeholders})",
+                    payment_ids,
+                )
+                stats["payment_event_dedup"] = cursor.rowcount
+                cursor = await self.conn.execute(
+                    f"DELETE FROM payment_events WHERE payment_id IN ({placeholders})",
+                    payment_ids,
+                )
+                stats["payment_events"] = cursor.rowcount
+
+            cursor = await self.conn.execute(
+                "DELETE FROM pending_payments WHERE user_id = ? OR COALESCE(recipient_user_id, 0) = ?",
+                (user_id, user_id),
+            )
+            stats["pending_payments"] = cursor.rowcount
+
+            cursor = await self.conn.execute(
+                "UPDATE users SET ref_by = 0, ref_rewarded = 0 WHERE ref_by = ?",
+                (user_id,),
+            )
+            stats["ref_by_cleared"] = cursor.rowcount
+
+            cursor = await self.conn.execute(
+                "DELETE FROM app_settings WHERE key IN (?, ?, ?)",
+                (
+                    f"support:blocked_until:{int(user_id)}",
+                    f"support:block_reason:{int(user_id)}",
+                    f"promo:active:{int(user_id)}",
+                ),
+            )
+            stats["app_settings"] = cursor.rowcount
+            cursor = await self.conn.execute(
+                "DELETE FROM app_settings WHERE key = ?",
+                (f"gift:note:{int(user_id)}",),
+            )
+            stats["gift_note"] = cursor.rowcount
+
+            cursor = await self.conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+            stats["users"] = cursor.rowcount
+            await self.conn.commit()
+
+        stats["deleted"] = sum(int(value or 0) for value in stats.values())
+        return stats
+
     async def set_ref_by(self, user_id: int, ref_by: int) -> bool:
         if not self.conn:
             return False

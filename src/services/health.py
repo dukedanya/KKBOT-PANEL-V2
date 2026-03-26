@@ -99,7 +99,8 @@ async def format_health_text(snapshot: Dict[str, Any]) -> str:
     problems = []
     if snapshot.get("processing_count", 0) > Config.HEALTH_MAX_PROCESSING:
         problems.append(f"слишком много processing: {snapshot['processing_count']}")
-    if snapshot.get("old_pending_count", 0) > 0:
+    old_pending_threshold = max(0, int(getattr(Config, "HEALTH_OLD_PENDING_ALERT_THRESHOLD", 0) or 0))
+    if old_pending_threshold > 0 and snapshot.get("old_pending_count", 0) >= old_pending_threshold:
         problems.append(f"pending старше {Config.HEALTH_PENDING_AGE_MIN} мин: {snapshot['old_pending_count']}")
     if snapshot.get("payment_error_count", 0) > 0:
         problems.append(f"ошибки активации за 24ч: {snapshot['payment_error_count']}")
@@ -142,10 +143,14 @@ async def emit_health_alerts(
             "too_many_processing",
             f"⚠️ ALERT\n\nСлишком много processing-платежей: {snapshot['processing_count']} (лимит {Config.HEALTH_MAX_PROCESSING})",
         ))
-    if snapshot.get("old_pending_count", 0) > 0:
+    old_pending_threshold = max(0, int(getattr(Config, "HEALTH_OLD_PENDING_ALERT_THRESHOLD", 0) or 0))
+    if old_pending_threshold > 0 and snapshot.get("old_pending_count", 0) >= old_pending_threshold:
         alert_specs.append((
             "old_pending",
-            f"⚠️ ALERT\n\nЕсть pending-платежи старше {Config.HEALTH_PENDING_AGE_MIN} минут: {snapshot['old_pending_count']}",
+            (
+                f"⚠️ ALERT\n\nЕсть pending-платежи старше {Config.HEALTH_PENDING_AGE_MIN} минут: "
+                f"{snapshot['old_pending_count']} (порог {old_pending_threshold})"
+            ),
         ))
     if snapshot.get("payment_error_count", 0) > 0:
         alert_specs.append((
