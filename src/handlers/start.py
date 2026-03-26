@@ -150,6 +150,18 @@ async def cmd_start(message: Message, state: FSMContext, db: Database, panel: Pa
             return
         buyer_user_id = int(gift.get("buyer_user_id") or 0)
         gift_note = str(gift.get("note") or "").strip()
+        recipient_user = await db.get_user(user_id)
+        if buyer_user_id and buyer_user_id != user_id and not (recipient_user or {}).get("ref_by"):
+            is_allowed, reason = await evaluate_referral_link(user_id, buyer_user_id, db=db, bot=message.bot)
+            if is_allowed:
+                await db.set_ref_by(user_id, buyer_user_id)
+            else:
+                logger.warning(
+                    "gift referral blocked user=%s buyer=%s reason=%s",
+                    user_id,
+                    buyer_user_id,
+                    reason,
+                )
         gift_text = (
             "🎁 <b>Подарочная подписка активирована</b>\n\n"
             f"Тариф: <b>{plan.get('name', plan_id)}</b>\n"

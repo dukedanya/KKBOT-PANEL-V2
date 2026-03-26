@@ -19,6 +19,7 @@ from tariffs.loader import load_tariffs
 from utils.helpers import set_bot
 
 logger = logging.getLogger(__name__)
+STARS_MULTIPLIER_SETTING_KEY = "system:telegram_stars_price_multiplier"
 
 
 @dataclass(slots=True)
@@ -39,6 +40,15 @@ async def lifespan() -> AppRuntimeContext:
     background_tasks: list[asyncio.Task] = []
     try:
         await container.db.connect()
+        if hasattr(container.db, "get_setting"):
+            raw_stars_multiplier = await container.db.get_setting(
+                STARS_MULTIPLIER_SETTING_KEY,
+                str(Config.TELEGRAM_STARS_PRICE_MULTIPLIER),
+            )
+            try:
+                Config.set_stars_price_multiplier(float(raw_stars_multiplier or Config.TELEGRAM_STARS_PRICE_MULTIPLIER))
+            except (TypeError, ValueError):
+                logger.warning("Invalid stored Telegram Stars multiplier: %s", raw_stars_multiplier)
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         if Config.MIGRATIONS_AUTO_APPLY:
             applied = await apply_migrations(container.db, base_dir)

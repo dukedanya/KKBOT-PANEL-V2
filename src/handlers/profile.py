@@ -37,30 +37,25 @@ async def render_profile_text(user_id: int, *, status: dict, panel: PanelAPI, db
     active_sub = status["active"]
     user_data = status["user"]
     balance = float(await db.get_balance(user_id))
-    active_promo = await db.get_active_user_promo_code(user_id) if hasattr(db, "get_active_user_promo_code") else ""
     gift_links = await db.get_gift_links_by_buyer(user_id, limit=3) if hasattr(db, "get_gift_links_by_buyer") else []
     payments = await db.get_pending_payments_by_user(user_id)
 
     summary_lines = [
-        "👤 <b>Ваш кабинет VPN</b>",
-        "",
-        f"💰 Баланс: <b>{balance:.2f} ₽</b>",
-        f"🏷 Активный промокод: <b>{active_promo or 'нет'}</b>",
+        "👤 <b>Личный кабинет | Какой-то VPN 🪬</b>",
     ]
 
     if not user_data or not active_sub:
-        text = "\n".join(summary_lines + ["", "У вас нет активной подписки."])
+        text = "\n".join(summary_lines + ["", "У вас нет активной подписки.", "", f"💰 Баланс: <b>{balance:.2f} ₽</b>"])
     else:
         legacy_user = await db.get_user(user_id) if hasattr(db, "get_user") else {}
         legacy_user = legacy_user or {}
         base_email = await panel_base_email(user_id, db)
         client_stats = await panel.get_client_stats(base_email)
         total_snapshot = await get_total_traffic_snapshot_for_user(user_id, db)
-        plan_text = user_data.get("plan_text") or legacy_user.get("plan_text") or "Неизвестно"
         ip_limit = int(user_data.get("ip_limit") or legacy_user.get("ip_limit") or 0)
         vpn_url = user_data.get("vpn_url") or legacy_user.get("vpn_url") or ""
         traffic_gb = float(user_data.get("traffic_gb") or legacy_user.get("traffic_gb") or 0)
-        connection_info = render_connection_info(vpn_url, user_id=user_id, plan_name=plan_text)
+        connection_info = render_connection_info(vpn_url, user_id=user_id, include_sidr=False)
 
         if total_snapshot and total_snapshot.fresh:
             expiry_time = 0
@@ -80,10 +75,10 @@ async def render_profile_text(user_id: int, *, status: dict, panel: PanelAPI, db
             sub_lines = [
                 "",
                 "📦 <b>Текущая подписка</b>",
-                f"Тариф: <b>{plan_text}</b>",
                 f"Режим доступа: <b>{mode_label}</b>",
                 f"IP-адреса: <b>до {ip_limit}</b>",
                 f"Срок действия: <b>до {expiry_date}</b>",
+                f"📡 Актуальный трафик: <b>{total_snapshot.total_gb:.2f} / {total_snapshot.quota_gb:.2f} ГБ</b>",
             ]
             if total_snapshot.mode == "grace" and total_snapshot.grace_until:
                 sub_lines.append(f"Grace до: <b>{format_grace_until(total_snapshot.grace_until)}</b>")
@@ -93,6 +88,8 @@ async def render_profile_text(user_id: int, *, status: dict, panel: PanelAPI, db
                     "🔗 <b>Ссылка на подключение</b>",
                     "",
                     connection_info,
+                    "",
+                    f"💰 Баланс: <b>{balance:.2f} ₽</b>",
                 ]
             )
         elif client_stats:
@@ -109,24 +106,23 @@ async def render_profile_text(user_id: int, *, status: dict, panel: PanelAPI, db
             sub_lines = [
                 "",
                 "📦 <b>Текущая подписка</b>",
-                f"Тариф: <b>{plan_text}</b>",
                 f"IP-адреса: <b>до {ip_limit}</b>",
                 f"Срок действия: <b>до {expiry_date}</b>",
-                "",
-                "🔗 <b>Ссылка на подключение</b>",
+                f"📡 Актуальный трафик: <b>{used_gb:.2f} / {traffic_gb:.2f} ГБ</b>",
                 "",
                 connection_info,
+                "",
+                f"💰 Баланс: <b>{balance:.2f} ₽</b>",
             ]
         else:
             sub_lines = [
                 "",
                 "📦 <b>Текущая подписка</b>",
-                f"Тариф: <b>{plan_text}</b>",
                 f"IP-адреса: <b>до {ip_limit}</b>",
                 "",
-                "🔗 <b>Ссылка на подключение</b>",
-                "",
                 connection_info,
+                "",
+                f"💰 Баланс: <b>{balance:.2f} ₽</b>",
             ]
         text = "\n".join(summary_lines + sub_lines)
 

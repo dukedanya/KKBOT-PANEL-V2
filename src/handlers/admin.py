@@ -27,6 +27,7 @@ from utils.templates import (
 
 logger = logging.getLogger(__name__)
 router = Router()
+STARS_MULTIPLIER_SETTING_KEY = "system:telegram_stars_price_multiplier"
 
 
 class TariffEditFSM(StatesGroup):
@@ -942,13 +943,19 @@ async def tariff_add(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == "admin:stars_settings")
-async def admin_stars_settings(callback: CallbackQuery):
+async def admin_stars_settings(callback: CallbackQuery, db: Database):
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Недостаточно прав", show_alert=True)
         return
+    stored_value = await db.get_setting(STARS_MULTIPLIER_SETTING_KEY, str(Config.TELEGRAM_STARS_PRICE_MULTIPLIER))
+    try:
+        effective_value = float(stored_value or Config.TELEGRAM_STARS_PRICE_MULTIPLIER)
+    except (TypeError, ValueError):
+        effective_value = float(Config.TELEGRAM_STARS_PRICE_MULTIPLIER)
+    Config.set_stars_price_multiplier(effective_value)
     text = (
         "⭐ <b>Настройки Telegram Stars</b>\n\n"
-        f"Текущий коэффициент: <b>{Config.TELEGRAM_STARS_PRICE_MULTIPLIER}</b>\n"
+        f"Текущий коэффициент: <b>{effective_value}</b>\n"
         "Если у тарифа не задана отдельная цена в Stars, используется этот коэффициент.\n\n"
         "Формула: price_rub × multiplier → Stars"
     )
@@ -971,7 +978,7 @@ async def admin_stars_multiplier_prompt(callback: CallbackQuery, state: FSMConte
 
 
 @router.message(StarsSettingsFSM.multiplier)
-async def admin_stars_multiplier_save(message: Message, state: FSMContext, bot: Bot):
+async def admin_stars_multiplier_save(message: Message, state: FSMContext, bot: Bot, db: Database):
     if not is_admin(message.from_user.id):
         await state.clear()
         return
@@ -983,6 +990,7 @@ async def admin_stars_multiplier_save(message: Message, state: FSMContext, bot: 
         await message.answer("❌ Введите число больше 0. Например: 1.0")
         return
     Config.set_stars_price_multiplier(value)
+    await db.set_setting(STARS_MULTIPLIER_SETTING_KEY, str(value))
     _write_env_variable("TELEGRAM_STARS_PRICE_MULTIPLIER", str(value))
     await state.clear()
     try:

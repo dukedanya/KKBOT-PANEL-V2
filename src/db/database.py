@@ -1132,13 +1132,21 @@ class Database:
         if not self.conn:
             return False
         async with self.lock:
+            current_cursor = await self.conn.execute(
+                "SELECT ref_by FROM users WHERE user_id = ?",
+                (user_id,),
+            )
+            row = await current_cursor.fetchone()
+            if not row:
+                return False
+            current_ref_by = row[0]
+            if user_id == ref_by:
+                return False
+            if current_ref_by not in (None, 0, "0", ""):
+                return False
             cursor = await self.conn.execute(
-                """
-                UPDATE users
-                SET ref_by = ?
-                WHERE user_id = ? AND user_id != ? AND (ref_by IS NULL OR ref_by = 0)
-                """,
-                (ref_by, user_id, user_id),
+                "UPDATE users SET ref_by = ? WHERE user_id = ?",
+                (ref_by, user_id),
             )
             await self.conn.commit()
             return cursor.rowcount > 0

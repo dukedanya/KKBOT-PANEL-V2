@@ -161,13 +161,22 @@ async def create_subscription(
     if _resolve_postgres_db(db):
         postgres_db = _resolve_postgres_db(db)
         assert postgres_db is not None
+        pending_days = await db.get_bonus_days_pending(user_id) if hasattr(db, "get_bonus_days_pending") else 0
+        carried_days = 0
+        if preserve_active_days:
+            carried_days = await get_remaining_active_days(user_id, panel, db)
+        if days_override is None:
+            days = int(plan.get("duration_days", 30) or 30) + int(extra_days or 0) + int(pending_days or 0) + int(carried_days or 0)
+        else:
+            days = int(days_override) + int(pending_days or 0)
+        days = max(days, 1)
         base_email = await panel_base_email(user_id, db)
         stable_sub_id = panel_sub_id(user_id)
         client = await panel.upsert_client(
             email=base_email,
             limit_ip=int(plan.get("ip_limit", 0) or 0),
             total_gb=int(plan.get("traffic_gb", 0) or 0),
-            days=int(days_override or plan.get("duration_days", 30) or 30) + int(extra_days or 0),
+            days=days,
             sub_id=stable_sub_id,
         )
         if not client:

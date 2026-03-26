@@ -112,10 +112,8 @@ def render_connection_info(
         return ""
 
     lines = [
-        "🔗 Ссылка на подключение для Happ:",
+        "🔗 Ссылка для подключения:",
         f"<code>{html.escape(clean_url)}</code>",
-        "",
-        "Внутри этой ссылки бот отдаёт основной сервер и лучшие LTE/CIDR-слоты.",
     ]
     if include_sidr:
         sidr_url = build_sidr_subscription_url(clean_url, user_id=user_id, plan_name=plan_name)

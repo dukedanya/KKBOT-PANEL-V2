@@ -11,6 +11,7 @@ from kkbot.services.subscriptions import (
     get_remaining_active_days,
     reward_referrer_percent,
 )
+from services.antifraud import evaluate_referral_link
 from services.panel import PanelAPI
 from tariffs import format_duration, format_traffic, get_by_id
 from utils.helpers import notify_admins, notify_user
@@ -202,6 +203,18 @@ async def process_successful_payment(
                 "plan": plan,
             }
     else:
+        if buyer_user_id != recipient_user_id and not (user_data or {}).get("ref_by"):
+            is_allowed, reason = await evaluate_referral_link(recipient_user_id, buyer_user_id, db=db, bot=bot)
+            if is_allowed:
+                await db.set_ref_by(recipient_user_id, buyer_user_id)
+                user_data = await db.get_user(recipient_user_id)
+            else:
+                logger.warning(
+                    "gift referral blocked recipient=%s buyer=%s reason=%s",
+                    recipient_user_id,
+                    buyer_user_id,
+                    reason,
+                )
         bonus_days_for_user = await resolve_bonus_days_for_user(user_data, db)
         carried_days = await get_remaining_active_days(recipient_user_id, panel, db)
         pending_bonus_days = await db.get_bonus_days_pending(recipient_user_id)

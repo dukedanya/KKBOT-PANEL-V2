@@ -13,11 +13,13 @@ from config import Config
 from db import Database
 from keyboards import main_menu_keyboard
 from kkbot.services.subscriptions import panel_base_email
+from kkbot.services.subscriptions import create_subscription
 from services.yookassa import YooKassaAPI
 from kkbot.services.subscriptions import revoke_subscription
 from services.payment_attention_resolver import auto_resolve_payment_attention
 from services.health import collect_health_snapshot
 from services.traffic_state import format_grace_until, get_total_traffic_snapshot_for_user
+from tariffs import get_all_active, get_by_id
 from utils.helpers import replace_message, notify_admins, notify_user
 from utils.payments import get_provider_payment_id
 from utils.support import format_support_restriction_reason, format_support_status
@@ -775,7 +777,7 @@ async def _build_incident_report_detail(db: Database, panel, payment_gateway, *,
     )
 
 
-async def _build_user_card_text(db: Database, user_id: int) -> str:
+async def _build_user_card_text(db: Database, user_id: int, *, display_name_override: str | None = None) -> str:
     payload = await db.get_user_card(user_id) if hasattr(db, "get_user_card") else {}
     if not payload:
         return f"👤 <b>Карточка пользователя</b>\n\nПользователь <code>{user_id}</code> не найден."
@@ -804,10 +806,38 @@ async def _build_user_card_text(db: Database, user_id: int) -> str:
         f"• <b>{float(item.get('amount') or 0):.2f} ₽</b> — {_trim_text(str(item.get('reason') or 'без причины'), 45)}"
         for item in adjustments[:4]
     ) or "—"
+    status_label = "активна" if bool(user.get("has_subscription")) else "не активна"
+    if user.get("frozen_until"):
+        status_label = "заморожена"
+    plan_label = str(user.get("plan_text") or "—")
+    ref_by = int(user.get("ref_by") or 0)
+    source_label = f"ref {ref_by}" if ref_by > 0 else "прямой вход"
+    last_payment_line = "—"
+    if payments:
+        latest_payment = payments[0]
+        payment_amount = float(latest_payment.get("amount") or 0)
+        payment_status = str(latest_payment.get("status") or "-")
+        last_payment_line = (
+            f"<code>{latest_payment.get('payment_id') or '-'}</code> — "
+            f"<b>{payment_amount:.2f} ₽</b> — <code>{payment_status}</code>"
+        )
+    username = str(user.get("username") or "").strip()
+    first_name = str(user.get("first_name") or "").strip()
+    display_parts: List[str] = []
+    if username:
+        display_parts.append(f"@{username}")
+    if first_name:
+        display_parts.append(first_name)
+    display_name = display_name_override or (" | ".join(display_parts) if display_parts else "—")
     return (
         "👤 <b>Карточка пользователя</b>\n\n"
-        f"ID: <code>{user_id}</code>\n"
+        f"ID: <code>{user_id}</code> • <a href=\"tg://user?id={user_id}\">Открыть чат</a>\n"
+        f"Имя: <code>{escape(display_name)}</code>\n"
         f"Дата входа: <code>{user.get('join_date') or '-'}</code>\n"
+        f"Статус: <b>{status_label}</b>\n"
+        f"Тариф: <b>{escape(plan_label)}</b>\n"
+        f"Источник: <code>{source_label}</code>\n"
+        f"Последний платёж: {last_payment_line}\n"
         f"Подписка активна: <b>{_format_bool_badge(user.get('has_subscription'))}</b>\n"
         f"VPN URL есть: <b>{_format_bool_badge(user.get('vpn_url'))}</b>\n"
         f"Истекает: <code>{user.get('expiry') or '-'}</code>\n"
@@ -1065,16 +1095,21 @@ def _user_card_keyboard(user_id: int, *, banned: bool = False, support_blocked: 
             [InlineKeyboardButton(text="🔄 Обновить карточку", callback_data=f"admin:usercard:{user_id}")],
             [
                 InlineKeyboardButton(text="💰 Скорректировать баланс", callback_data=f"admin:usercard:balance_prompt:{user_id}"),
-                InlineKeyboardButton(text=ban_label, callback_data=f"admin:usercard:ban_toggle:{user_id}"),
+                InlineKeyboardButton(text="⛔ Отключить подписку", callback_data=f"admin:usercard:revoke_subscription:{user_id}"),
             ],
             [
                 InlineKeyboardButton(text=support_label, callback_data=f"admin:usercard:support_menu:{user_id}"),
-                InlineKeyboardButton(text="🔔 Сбросить уведомления", callback_data=f"admin:usercard:reset_notify:{user_id}"),
+                InlineKeyboardButton(text=ban_label, callback_data=f"admin:usercard:ban_toggle:{user_id}"),
             ],
             [
                 InlineKeyboardButton(text="🕓 История", callback_data=f"admin:usercard:timeline:{user_id}"),
                 InlineKeyboardButton(text="📜 Тикеты", callback_data=f"admin:usercard:tickets:{user_id}"),
             ],
+            [
+                InlineKeyboardButton(text="🎁 Выдать тариф", callback_data=f"admin:usercard:grant_tariff:{user_id}"),
+                InlineKeyboardButton(text="♻️ Сбросить trial", callback_data=f"admin:usercard:reset_trial:{user_id}"),
+            ],
+            [InlineKeyboardButton(text="🔔 Сбросить уведомления", callback_data=f"admin:usercard:reset_notify:{user_id}")],
             [InlineKeyboardButton(text="🗑 Удалить пользователя", callback_data=f"admin:usercard:delete_prompt:{user_id}")],
             [InlineKeyboardButton(text="⬅️ К сервису", callback_data="adminmenu:service")],
         ]
@@ -1103,6 +1138,25 @@ def _user_card_support_keyboard(user_id: int, *, support_blocked: bool) -> Inlin
             InlineKeyboardButton(text="Оскорбления · 7д", callback_data=f"admin:usercard:support_block:{user_id}:abuse"),
             InlineKeyboardButton(text="Мошенничество · 30д", callback_data=f"admin:usercard:support_block:{user_id}:fraud"),
         ])
+    rows.append([InlineKeyboardButton(text="⬅️ К карточке", callback_data=f"admin:usercard:{user_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _user_card_grant_tariff_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    rows: List[List[InlineKeyboardButton]] = []
+    for plan in get_all_active():
+        plan_id = str(plan.get("id") or "").strip()
+        if not plan_id:
+            continue
+        plan_name = str(plan.get("name") or plan_id)
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"🎁 {plan_name}",
+                    callback_data=f"admin:usercard:grant_tariff_confirm:{user_id}:{plan_id}",
+                )
+            ]
+        )
     rows.append([InlineKeyboardButton(text="⬅️ К карточке", callback_data=f"admin:usercard:{user_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -1238,7 +1292,10 @@ async def admin_analytics_menu_callback(callback: CallbackQuery):
         reply_markup=_admin_analytics_menu_keyboard(),
         parse_mode="HTML",
     )
-    await callback.answer()
+    try:
+        await callback.answer()
+    except Exception as exc:
+        logger.warning("Analytics menu callback ack failed: %s", exc)
 
 
 @router.callback_query(F.data == "adminmenu:content")
@@ -1345,7 +1402,8 @@ async def admin_user_lookup_prompt(callback: CallbackQuery, state: FSMContext, d
         return
     await state.set_state(PaymentDiagnosticsFSM.waiting_user_id)
     recent = await db.get_recent_user_ids(limit=5) if hasattr(db, "get_recent_user_ids") else []
-    recent_text = ", ".join(f"<code>{item}</code>" for item in recent) if recent else "нет данных"
+    recent_labels = [await _format_user_id_with_name(callback.bot, db, int(item)) for item in recent]
+    recent_text = ", ".join(recent_labels) if recent_labels else "нет данных"
     await smart_edit_message(
         callback.message,
         "👤 <b>Поиск пользователя</b>\n\nОтправьте <code>user_id</code> одним сообщением.\n\n"
@@ -1354,6 +1412,24 @@ async def admin_user_lookup_prompt(callback: CallbackQuery, state: FSMContext, d
         parse_mode="HTML",
     )
     await callback.answer()
+
+
+async def _send_user_card(message: Message, db: Database, user_id: int, *, state: FSMContext | None = None) -> None:
+    user = await db.get_user(user_id)
+    display_name = await _resolve_user_display_name(message.bot, user_id, user)
+    text = await _build_user_card_text(db, user_id, display_name_override=display_name)
+    restriction = await db.get_support_restriction(user_id) if hasattr(db, "get_support_restriction") else {}
+    if state is not None:
+        await state.clear()
+    await message.answer(
+        text,
+        parse_mode="HTML",
+        reply_markup=_user_card_keyboard(
+            user_id,
+            banned=bool((user or {}).get("banned")),
+            support_blocked=bool(restriction.get("active")),
+        ),
+    )
 
 
 @router.message(PaymentDiagnosticsFSM.waiting_user_id)
@@ -1366,29 +1442,70 @@ async def admin_user_lookup_receive(message: Message, state: FSMContext, db: Dat
     except ValueError:
         await message.answer("❌ Отправьте числовой user_id.")
         return
-    text = await _build_user_card_text(db, user_id)
+    await _send_user_card(message, db, user_id, state=state)
+
+
+@router.message(F.text.regexp(r"^\d{5,}$"))
+async def admin_user_lookup_quick(message: Message, state: FSMContext, db: Database):
+    if not is_admin(message.from_user.id):
+        return
+    current_state = await state.get_state()
+    if current_state:
+        return
+    raw = (message.text or "").strip()
+    try:
+        user_id = int(raw)
+    except ValueError:
+        return
     user = await db.get_user(user_id)
-    restriction = await db.get_support_restriction(user_id) if hasattr(db, "get_support_restriction") else {}
-    await state.clear()
-    await message.answer(
-        text,
-        parse_mode="HTML",
-        reply_markup=_user_card_keyboard(
-            user_id,
-            banned=bool((user or {}).get("banned")),
-            support_blocked=bool(restriction.get("active")),
-        ),
-    )
+    if not user:
+        return
+    await _send_user_card(message, db, user_id)
+
+
+async def _resolve_user_display_name(bot: Bot, user_id: int, user: Dict[str, Any] | None = None) -> str:
+    payload = user or {}
+    username = str(payload.get("username") or "").strip()
+    first_name = str(payload.get("first_name") or "").strip()
+    parts: List[str] = []
+    if username:
+        parts.append(f"@{username}")
+    if first_name:
+        parts.append(first_name)
+    if parts:
+        return " | ".join(parts)
+    try:
+        chat = await bot.get_chat(user_id)
+    except Exception as exc:
+        logger.warning("User card get_chat failed for %s: %s", user_id, exc)
+        return "—"
+    fresh_parts: List[str] = []
+    chat_username = str(getattr(chat, "username", "") or "").strip()
+    chat_first_name = str(getattr(chat, "first_name", "") or "").strip()
+    if chat_username:
+        fresh_parts.append(f"@{chat_username}")
+    if chat_first_name:
+        fresh_parts.append(chat_first_name)
+    return " | ".join(fresh_parts) if fresh_parts else "—"
+
+
+async def _format_user_id_with_name(bot: Bot, db: Database, user_id: int) -> str:
+    user = await db.get_user(user_id)
+    display_name = await _resolve_user_display_name(bot, user_id, user)
+    if display_name == "—":
+        return f"<code>{user_id}</code>"
+    return f"<code>{user_id}</code> ({escape(display_name)})"
 
 
 @router.callback_query(F.data.regexp(r"^admin:usercard:\d+$"))
-async def admin_user_card_callback(callback: CallbackQuery, db: Database):
+async def admin_user_card_callback(callback: CallbackQuery, db: Database, bot: Bot):
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Недостаточно прав", show_alert=True)
         return
     user_id = int(callback.data.split(":")[2])
-    text = await _build_user_card_text(db, user_id)
     user = await db.get_user(user_id)
+    display_name = await _resolve_user_display_name(bot, user_id, user)
+    text = await _build_user_card_text(db, user_id, display_name_override=display_name)
     restriction = await db.get_support_restriction(user_id) if hasattr(db, "get_support_restriction") else {}
     await smart_edit_message(
         callback.message,
@@ -1461,6 +1578,141 @@ async def admin_user_card_balance_prompt(callback: CallbackQuery, state: FSMCont
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ К карточке", callback_data=f"admin:usercard:{user_id}")]]),
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:usercard:grant_tariff:"))
+async def admin_user_card_grant_tariff_prompt(callback: CallbackQuery, db: Database):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Недостаточно прав", show_alert=True)
+        return
+    user_id = int(callback.data.split(":")[-1])
+    user = await db.get_user(user_id)
+    if not user:
+        await callback.answer("Пользователь не найден", show_alert=True)
+        return
+    active_plans = get_all_active()
+    if not active_plans:
+        await callback.answer("Нет активных тарифов", show_alert=True)
+        return
+    plan_lines = [
+        f"• <b>{escape(str(plan.get('name') or plan.get('id') or 'Тариф'))}</b>"
+        for plan in active_plans[:8]
+    ]
+    text = (
+        "🎁 <b>Выдача тарифа</b>\n\n"
+        f"Пользователь: <code>{user_id}</code>\n\n"
+        "Выберите тариф, который нужно выдать вручную:\n"
+        + "\n".join(plan_lines)
+    )
+    await smart_edit_message(
+        callback.message,
+        text,
+        parse_mode="HTML",
+        reply_markup=_user_card_grant_tariff_keyboard(user_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.regexp(r"^admin:usercard:grant_tariff_confirm:\d+:[A-Za-z0-9_.-]+$"))
+async def admin_user_card_grant_tariff_confirm(callback: CallbackQuery, db: Database, panel, bot: Bot):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Недостаточно прав", show_alert=True)
+        return
+
+    parts = callback.data.split(":")
+    user_id = int(parts[-2])
+    plan_id = parts[-1]
+    user = await db.get_user(user_id)
+    if not user:
+        await callback.answer("Пользователь не найден", show_alert=True)
+        return
+
+    plan = get_by_id(plan_id)
+    if not plan:
+        await callback.answer("Тариф не найден", show_alert=True)
+        return
+
+    vpn_url = await create_subscription(
+        user_id,
+        plan,
+        db=db,
+        panel=panel,
+        plan_suffix=" (выдан админом)",
+    )
+    if not vpn_url:
+        await callback.answer("Не удалось выдать тариф", show_alert=True)
+        return
+
+    if hasattr(db, "add_admin_user_action"):
+        await db.add_admin_user_action(
+            user_id,
+            callback.from_user.id,
+            "grant_tariff",
+            f"plan_id={plan_id}",
+        )
+
+    plan_name = str(plan.get("name") or plan_id)
+    await notify_user(
+        bot,
+        user_id,
+        (
+            "🎁 <b>Вам выдан тариф</b>\n\n"
+            f"Тариф: <b>{escape(plan_name)}</b>\n"
+            "Подключение уже готово в личном кабинете."
+        ),
+    )
+
+    text = await _build_user_card_text(db, user_id)
+    refreshed = await db.get_user(user_id)
+    restriction = await db.get_support_restriction(user_id) if hasattr(db, "get_support_restriction") else {}
+    await smart_edit_message(
+        callback.message,
+        "✅ Тариф выдан вручную.\n\n" + text,
+        parse_mode="HTML",
+        reply_markup=_user_card_keyboard(
+            user_id,
+            banned=bool((refreshed or {}).get("banned")),
+            support_blocked=bool(restriction.get("active")),
+        ),
+    )
+    await callback.answer("Тариф выдан")
+
+
+@router.callback_query(F.data.startswith("admin:usercard:reset_trial:"))
+async def admin_user_card_reset_trial(callback: CallbackQuery, db: Database):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Недостаточно прав", show_alert=True)
+        return
+
+    user_id = int(callback.data.split(":")[-1])
+    user = await db.get_user(user_id)
+    if not user:
+        await callback.answer("Пользователь не найден", show_alert=True)
+        return
+
+    await db.update_user(user_id, trial_used=0, trial_declined=0)
+    if hasattr(db, "add_admin_user_action"):
+        await db.add_admin_user_action(
+            user_id,
+            callback.from_user.id,
+            "reset_trial",
+            "trial_used=0 trial_declined=0",
+        )
+
+    text = await _build_user_card_text(db, user_id)
+    refreshed = await db.get_user(user_id)
+    restriction = await db.get_support_restriction(user_id) if hasattr(db, "get_support_restriction") else {}
+    await smart_edit_message(
+        callback.message,
+        "♻️ Возможность активировать пробный период сброшена.\n\n" + text,
+        parse_mode="HTML",
+        reply_markup=_user_card_keyboard(
+            user_id,
+            banned=bool((refreshed or {}).get("banned")),
+            support_blocked=bool(restriction.get("active")),
+        ),
+    )
+    await callback.answer("Пробный период сброшен")
 
 
 @router.message(PaymentDiagnosticsFSM.waiting_user_balance_adjustment)
@@ -1556,6 +1808,52 @@ async def admin_user_card_reset_notifications(callback: CallbackQuery, db: Datab
             support_blocked=bool(restriction.get("active")),
         ),
     )
+
+
+@router.callback_query(F.data.startswith("admin:usercard:revoke_subscription:"))
+async def admin_user_card_revoke_subscription(callback: CallbackQuery, db: Database, panel, bot: Bot):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Недостаточно прав", show_alert=True)
+        return
+    user_id = int(callback.data.split(":")[-1])
+    user = await db.get_user(user_id)
+    if not user:
+        await callback.answer("Пользователь не найден", show_alert=True)
+        return
+    ok = await revoke_subscription(
+        user_id,
+        db=db,
+        panel=panel,
+        reason="Отключено администратором",
+    )
+    if hasattr(db, "add_admin_user_action"):
+        await db.add_admin_user_action(
+            user_id,
+            callback.from_user.id,
+            "revoke_subscription",
+            f"ok={int(bool(ok))}",
+        )
+    if ok:
+        await notify_user(
+            bot,
+            user_id,
+            "⛔ <b>Подписка отключена администратором</b>\n\nЕсли это ошибка, напишите в поддержку.",
+        )
+    refreshed = await db.get_user(user_id)
+    display_name = await _resolve_user_display_name(bot, user_id, refreshed)
+    text = await _build_user_card_text(db, user_id, display_name_override=display_name)
+    restriction = await db.get_support_restriction(user_id) if hasattr(db, "get_support_restriction") else {}
+    await smart_edit_message(
+        callback.message,
+        ("⛔ Подписка отключена.\n\n" if ok else "⚠️ Не удалось отключить подписку полностью.\n\n") + text,
+        parse_mode="HTML",
+        reply_markup=_user_card_keyboard(
+            user_id,
+            banned=bool((refreshed or {}).get("banned")),
+            support_blocked=bool(restriction.get("active")),
+        ),
+    )
+    await callback.answer("Подписка отключена" if ok else "Не удалось отключить")
 
 
 @router.callback_query(F.data.startswith("admin:usercard:delete_prompt:"))

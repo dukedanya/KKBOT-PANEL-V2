@@ -87,6 +87,30 @@ async def _notify_activation_problem(*, bot, payment: dict, reason: str, provide
     )
 
 
+def _yookassa_cancel_reason_text(obj: dict) -> str:
+    details = obj.get("cancellation_details") or {}
+    reason = str(details.get("reason") or "").strip()
+    description = str(details.get("party") or "").strip()
+    suffix_parts = [part for part in (reason, description) if part]
+    if not suffix_parts:
+        return "❌ <b>Платёж был отменён в ЮKassa.</b>"
+    return "❌ <b>Платёж был отменён в ЮKassa.</b>\n\nПричина: <code>" + " / ".join(suffix_parts) + "</code>"
+
+
+async def _notify_yookassa_waiting_capture(*, bot, payment: dict, obj: dict) -> None:
+    user_id = int(payment["user_id"])
+    amount_obj = obj.get("amount") or {}
+    amount_value = amount_obj.get("value")
+    message = (
+        "⏳ <b>Платёж ожидает подтверждения</b>\n\n"
+        "ЮKassa получила оплату, но подтверждение ещё не завершено.\n"
+        "Обычно это занимает совсем немного времени."
+    )
+    if amount_value:
+        message += f"\n\nСумма: <b>{amount_value} ₽</b>"
+    await bot.send_message(user_id, message, parse_mode="HTML")
+
+
 async def itpay_webhook_handler(request: web.Request) -> web.Response:
     raw_body = await request.read()
     signature = request.headers.get("itpay-signature", "")
@@ -155,7 +179,7 @@ async def yookassa_webhook_handler(request: web.Request) -> web.Response:
         return web.Response(status=400, text="bad json")
 
     event_type = body.get("event", "")
-    if event_type not in ("payment.succeeded", "payment.canceled", "refund.succeeded"):
+    if event_type not in ("payment.succeeded", "payment.waiting_for_capture", "payment.canceled", "refund.succeeded"):
         return web.Response(status=200, text="ignored")
     obj = body.get("object") or {}
     provider_payment_id = obj.get("id", "")
@@ -258,6 +282,21 @@ async def yookassa_webhook_handler(request: web.Request) -> web.Response:
     if payment.get("status") != "pending":
         return web.Response(status=200, text="already handled")
 
+    if event_type == "payment.waiting_for_capture":
+        await db.record_payment_status_transition(
+            payment["payment_id"],
+            from_status=payment.get("status"),
+            to_status="waiting_for_capture",
+            source="yookassa/webhook",
+            reason="payment.waiting_for_capture",
+            metadata=f"provider_payment_id={provider_payment_id}",
+        )
+        try:
+            await _notify_yookassa_waiting_capture(bot=bot, payment=payment, obj=obj)
+        except Exception as exc:
+            logger.warning("YooKassa waiting_for_capture notify failed payment=%s: %s", payment["payment_id"], exc)
+        return web.Response(status=200, text="ok")
+
     if event_type == "payment.succeeded":
         result = await process_successful_payment(payment=payment, db=db, panel=panel, bot=bot, admin_context="YooKassa webhook")
         if result.get("ok"):
@@ -271,7 +310,7 @@ async def yookassa_webhook_handler(request: web.Request) -> web.Response:
         payment=payment,
         db=db,
         bot=bot,
-        reason_text="❌ <b>Платёж был отменён в YooKassa.</b>",
+        reason_text=_yookassa_cancel_reason_text(obj),
         admin_context="YooKassa webhook canceled",
     )
     if result.get("ok") or result.get("already_processed"):
