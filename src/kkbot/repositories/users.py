@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from kkbot.db.postgres import PostgresDatabase
@@ -61,6 +62,7 @@ class UserRepository:
 
     async def upsert_legacy_archive(self, payload: dict[str, Any]) -> None:
         user_id = int(payload.get("user_id") or 0)
+        payload_json = json.dumps(payload, ensure_ascii=False, default=str)
         async with self.db.pool.acquire() as conn:  # type: ignore[union-attr]
             await conn.execute(
                 """
@@ -71,7 +73,7 @@ class UserRepository:
                     imported_at = NOW()
                 """,
                 user_id,
-                payload,
+                payload_json,
             )
 
     async def count_users(self) -> int:

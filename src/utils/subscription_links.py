@@ -8,6 +8,15 @@ from config import Config
 logger = logging.getLogger(__name__)
 
 
+def render_direct_slot_notice() -> str:
+    if not getattr(Config, "DIRECT_SLOT_NOTICE_ENABLED", True):
+        return ""
+    return (
+        "ℹ️ Основной сервер работает через VDS и учитывается по серверному трафику.\n"
+        "LTE Slot A/B/C — это прямые CIDR-узлы без VDS в трафик-цепочке, их байты сервер автоматически не считает."
+    )
+
+
 def _build_subscription_name(*, user_id: Optional[int] = None, plan_name: Optional[str] = None) -> str:
     base_name = (Config.SIDR_SUBSCRIPTION_NAME or "Kakoito VPN").strip() or "Kakoito VPN"
     if plan_name:
@@ -96,8 +105,11 @@ def render_connection_info(
         "🔗 Подписка для Happ:",
         f"<code>{html.escape(clean_url)}</code>",
         "",
-        "Внутри этой ссылки бот отдаёт общий список подключений по всем обычным и grace inbound-ам.",
+        "Внутри этой ссылки бот отдаёт основной сервер и лучшие LTE/CIDR-слоты.",
     ]
+    notice = render_direct_slot_notice()
+    if notice:
+        lines.extend(["", notice])
     if include_sidr:
         sidr_url = build_sidr_subscription_url(clean_url, user_id=user_id, plan_name=plan_name)
         if sidr_url:

@@ -55,12 +55,7 @@ class PaymentFlowService:
 
 
 def _resolve_postgres_db(db: object) -> PostgresDatabase | None:
-    if isinstance(db, PostgresDatabase):
-        return db
-    postgres = getattr(db, "postgres", None)
-    if isinstance(postgres, PostgresDatabase):
-        return postgres
-    return None
+    return db if isinstance(db, PostgresDatabase) else None
 
 
 async def process_successful_payment(

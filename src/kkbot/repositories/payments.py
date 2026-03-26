@@ -1,10 +1,29 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Iterable
 from typing import Any
 
 from kkbot.db.postgres import PostgresDatabase
+
+
+def _dt(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        normalized = raw.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+    return None
 
 
 class PaymentRepository:
@@ -68,10 +87,10 @@ class PaymentRepository:
                 str(payload.get("gift_label") or ""),
                 str(payload.get("last_error") or ""),
                 int(payload.get("activation_attempts") or 0),
-                payload.get("created_at"),
-                payload.get("processed_at"),
-                payload.get("processing_started_at"),
-                payload.get("next_retry_at"),
+                _dt(payload.get("created_at")),
+                _dt(payload.get("processed_at")),
+                _dt(payload.get("processing_started_at")),
+                _dt(payload.get("next_retry_at")),
                 json.dumps({"legacy_payload": payload}, ensure_ascii=False, default=str),
             )
 

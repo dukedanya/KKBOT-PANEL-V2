@@ -19,6 +19,7 @@ FAILED_STATUSES = {"canceled", "cancelled", "failed", "expired", "rejected", "de
 class ItpayAPI:
     def __init__(self):
         self.session: Optional[aiohttp.ClientSession] = None
+        self.last_error_message: str = ""
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if not self.session or self.session.closed:
@@ -83,6 +84,7 @@ class ItpayAPI:
         **kwargs,
     ) -> Optional[Dict[str, Any]]:
         session = await self._get_session()
+        self.last_error_message = ""
         webhook_base = self._resolve_public_base_url()
         payload: Dict[str, Any] = {
             "amount": f"{amount:.2f}",
@@ -102,10 +104,16 @@ class ItpayAPI:
                 data = await self._read_json_response(resp)
                 if resp.status == 200 and data and data.get("data"):
                     return data["data"]
+                error_text = ""
+                if isinstance(data, dict):
+                    error_text = str(data.get("error") or data.get("message") or "").strip()
+                self.last_error_message = error_text
                 logger.error("ITPAY create_payment status=%s response=%s", resp.status, data)
         except aiohttp.ClientError as e:
+            self.last_error_message = f"Ошибка сети ITPAY: {e}"
             logger.error("ITPAY create_payment network error: %s", e)
         except Exception as e:
+            self.last_error_message = f"Ошибка ITPAY: {e}"
             logger.error("ITPAY create_payment: %s", e)
         return None
 

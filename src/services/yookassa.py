@@ -30,6 +30,7 @@ class YooKassaAPI:
 
     def __init__(self):
         self.session: Optional[aiohttp.ClientSession] = None
+        self.last_error_message: str = ""
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if not self.session or self.session.closed:
@@ -76,6 +77,39 @@ class YooKassaAPI:
         }
         return normalized
 
+    @staticmethod
+    def _receipt_email(user_id: int) -> str:
+        domain = (Config.PANEL_EMAIL_DOMAIN or "").strip().lower()
+        if "." not in domain:
+            domain = "example.com"
+        return f"user_{user_id}@{domain}"
+
+    @classmethod
+    def _build_receipt(
+        cls,
+        *,
+        amount: float,
+        user_id: int,
+        description: str,
+    ) -> Dict[str, Any]:
+        item_description = (description or "Оплата подписки").strip()[:128]
+        value = f"{amount:.2f}"
+        return {
+            "customer": {
+                "email": cls._receipt_email(user_id),
+            },
+            "items": [
+                {
+                    "description": item_description,
+                    "quantity": "1.00",
+                    "amount": {"value": value, "currency": "RUB"},
+                    "vat_code": 1,
+                    "payment_mode": "full_payment",
+                    "payment_subject": "service",
+                }
+            ],
+        }
+
     async def create_payment(
         self,
         amount: float,
@@ -87,6 +121,7 @@ class YooKassaAPI:
         **kwargs,
     ) -> Optional[Dict[str, Any]]:
         session = await self._get_session()
+        self.last_error_message = ""
         payload: Dict[str, Any] = {
             "amount": {"value": f"{amount:.2f}", "currency": "RUB"},
             "capture": True,
@@ -100,6 +135,7 @@ class YooKassaAPI:
                 "plan_id": plan_id,
                 "client_payment_id": client_payment_id,
             },
+            "receipt": self._build_receipt(amount=amount, user_id=user_id, description=description),
         }
         headers = {"Idempotence-Key": client_payment_id}
         try:
@@ -107,10 +143,16 @@ class YooKassaAPI:
                 data = await self._read_json_response(resp)
                 if resp.status in (200, 201) and data and data.get("id"):
                     return self._normalize_payment(data)
+                if isinstance(data, dict):
+                    self.last_error_message = str(
+                        data.get("description") or data.get("code") or data.get("type") or ""
+                    ).strip()
                 logger.error("YooKassa create_payment status=%s response=%s", resp.status, data)
         except aiohttp.ClientError as e:
+            self.last_error_message = f"Ошибка сети YooKassa: {e}"
             logger.error("YooKassa create_payment network error: %s", e)
         except Exception as e:
+            self.last_error_message = f"Ошибка YooKassa: {e}"
             logger.error("YooKassa create_payment: %s", e)
         return None
 

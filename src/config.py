@@ -117,6 +117,7 @@ class Config:
     TOTAL_TRAFFIC_STATE_URL: str = os.getenv("TOTAL_TRAFFIC_STATE_URL", "").strip()
     GRACE_STATE_PATH: str = os.getenv("GRACE_STATE_PATH", "/root/lte-whitelist/server/data/grace-state.json").strip()
     TOTAL_TRAFFIC_STATE_MAX_AGE_SEC: int = int(os.getenv("TOTAL_TRAFFIC_STATE_MAX_AGE_SEC", "1800"))
+    DIRECT_SLOT_NOTICE_ENABLED: bool = str_to_bool(os.getenv("DIRECT_SLOT_NOTICE_ENABLED", "true"))
     ENABLE_SERVER_BOOTSTRAP: bool = str_to_bool(os.getenv("ENABLE_SERVER_BOOTSTRAP", "false"))
     SERVER_BOOTSTRAP_SOURCE_ROOT: str = os.getenv("SERVER_BOOTSTRAP_SOURCE_ROOT", "").strip()
     SERVER_BOOTSTRAP_REMOTE_ROOT: str = os.getenv("SERVER_BOOTSTRAP_REMOTE_ROOT", "/root/lte-whitelist").strip()

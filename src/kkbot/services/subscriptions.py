@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any
 
@@ -70,6 +71,18 @@ def _resolve_postgres_db(db: object) -> PostgresDatabase | None:
     return None
 
 
+def _normalize_meta(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str) and value.strip():
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    return {}
+
+
 async def panel_base_email(user_id: int, db: object) -> str:
     if _resolve_postgres_db(db):
         return f"{user_id}@kakoitovpn"
@@ -88,8 +101,8 @@ def is_currently_frozen(user):
     return legacy_subscriptions.is_currently_frozen(user)
 
 
-async def get_remaining_active_days(user_id: int, panel) -> int:
-    return await legacy_subscriptions.get_remaining_active_days(user_id, panel)
+async def get_remaining_active_days(user_id: int, panel, db) -> int:
+    return await legacy_subscriptions.get_remaining_active_days(user_id, panel, db)
 
 
 async def get_subscription_status(user_id: int, db, panel) -> dict[str, Any]:
@@ -98,6 +111,7 @@ async def get_subscription_status(user_id: int, db, panel) -> dict[str, Any]:
         service = SubscriptionService(postgres_db)
         current = await service.get_subscription_status(user_id)
         record = current.get("record") or {}
+        meta = _normalize_meta(record.get("meta"))
         expiry_raw = record.get("expires_at")
         expiry_dt = None
         if expiry_raw:
@@ -107,7 +121,7 @@ async def get_subscription_status(user_id: int, db, panel) -> dict[str, Any]:
                 expiry_dt = None
         return {
             "active": bool(current.get("active")),
-            "user": {"plan_text": record.get("plan_code", ""), "vpn_url": (record.get("meta") or {}).get("vpn_url", "")},
+            "user": {"plan_text": record.get("plan_code", ""), "vpn_url": meta.get("vpn_url", "")},
             "is_frozen": False,
             "frozen_until": None,
             "expiry_dt": expiry_dt,

@@ -203,7 +203,7 @@ async def process_successful_payment(
             }
     else:
         bonus_days_for_user = await resolve_bonus_days_for_user(user_data, db)
-        carried_days = await get_remaining_active_days(recipient_user_id, panel)
+        carried_days = await get_remaining_active_days(recipient_user_id, panel, db)
         pending_bonus_days = await db.get_bonus_days_pending(recipient_user_id)
         vpn_url = await create_subscription(
             recipient_user_id,

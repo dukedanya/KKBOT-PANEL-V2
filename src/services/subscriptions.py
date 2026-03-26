@@ -40,7 +40,7 @@ def is_currently_frozen(user: Optional[Dict[str, Any]]) -> bool:
     return bool(frozen_until and frozen_until > datetime.utcnow())
 
 
-async def get_remaining_active_days(user_id: int, panel: PanelAPI) -> int:
+async def get_remaining_active_days(user_id: int, panel: PanelAPI, db: Database) -> int:
     """Возвращает остаток активных дней по клиенту, округляя вверх до целого дня."""
     try:
         base_email = await panel_base_email(user_id, db)
@@ -118,7 +118,7 @@ async def create_subscription(
     pending_days = await db.get_bonus_days_pending(user_id)
     carried_days = 0
     if preserve_active_days:
-        carried_days = await get_remaining_active_days(user_id, panel)
+        carried_days = await get_remaining_active_days(user_id, panel, db)
 
     if days_override is None:
         days = int(plan.get("duration_days", 30) or 30) + extra_days + pending_days + carried_days

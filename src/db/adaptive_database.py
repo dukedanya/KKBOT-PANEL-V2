@@ -684,6 +684,7 @@ class Database:
         promo_code: str = "",
         promo_discount_percent: float = 0.0,
         gift_label: str = "",
+        gift_note: str = "",
     ) -> bool:
         created = await self.legacy.add_pending_payment(
             payment_id,
@@ -701,6 +702,8 @@ class Database:
         if repo is not None:
             payload = await self.legacy.get_pending_payment(payment_id)
             if payload is not None:
+                if gift_note:
+                    payload["gift_note"] = gift_note
                 await repo.upsert_legacy_intent(payload)
         return created
 

@@ -22,6 +22,17 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+def _direct_slot_notice_lines() -> list[str]:
+    if not Config.DIRECT_SLOT_NOTICE_ENABLED:
+        return []
+    return [
+        "",
+        "ℹ️ <b>Учёт трафика</b>",
+        "Показанный остаток относится к контролируемому серверному каналу через VDS.",
+        "LTE Slot A/B/C в Happ сейчас выдаются как прямые CIDR-узлы, их трафик сервер автоматически не считает.",
+    ]
+
+
 def _payment_status_label(status: str) -> str:
     mapping = {
         "accepted": "оплачен",
@@ -97,6 +108,7 @@ async def render_profile_text(user_id: int, *, status: dict, panel: PanelAPI, db
                     connection_info,
                 ]
             )
+            sub_lines.extend(_direct_slot_notice_lines())
         elif client_stats:
             used_bytes = 0
             expiry_time = 0
@@ -118,6 +130,7 @@ async def render_profile_text(user_id: int, *, status: dict, panel: PanelAPI, db
                 "",
                 connection_info,
             ]
+            sub_lines.extend(_direct_slot_notice_lines())
         else:
             sub_lines = [
                 "",
@@ -129,6 +142,7 @@ async def render_profile_text(user_id: int, *, status: dict, panel: PanelAPI, db
                 "",
                 "<i>Общий traffic-state недоступен, показана статистика только панели</i>",
             ]
+            sub_lines.extend(_direct_slot_notice_lines())
         text = "\n".join(summary_lines + sub_lines)
 
     if payments:

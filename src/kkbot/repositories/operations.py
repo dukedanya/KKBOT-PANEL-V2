@@ -1,8 +1,28 @@
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime
 from typing import Any
 
 from kkbot.db.postgres import PostgresDatabase
+
+
+def _dt(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        normalized = raw.replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+    return None
 
 
 class OperationsRepository:
@@ -143,6 +163,7 @@ class OperationsRepository:
         return [dict(row) for row in rows]
 
     async def upsert_withdraw_request(self, payload: dict[str, Any]) -> None:
+        meta_json = json.dumps({"legacy_payload": payload}, ensure_ascii=False, default=str)
         async with self.db.pool.acquire() as conn:  # type: ignore[union-attr]
             await conn.execute(
                 """
@@ -160,9 +181,9 @@ class OperationsRepository:
                 int(payload.get("user_id") or 0),
                 float(payload.get("amount") or 0),
                 str(payload.get("status") or "pending"),
-                payload.get("created_at"),
-                payload.get("processed_at"),
-                {"legacy_payload": payload},
+                _dt(payload.get("created_at")),
+                _dt(payload.get("processed_at")),
+                meta_json,
             )
 
     async def list_pending_withdraw_requests(self) -> list[dict[str, Any]]:
@@ -200,6 +221,7 @@ class OperationsRepository:
         return [dict(row) for row in rows]
 
     async def upsert_support_ticket(self, payload: dict[str, Any]) -> None:
+        meta_json = json.dumps({"legacy_payload": payload}, ensure_ascii=False, default=str)
         async with self.db.pool.acquire() as conn:  # type: ignore[union-attr]
             await conn.execute(
                 """
@@ -217,9 +239,9 @@ class OperationsRepository:
                 int(payload.get("user_id") or 0),
                 str(payload.get("status") or "open"),
                 payload.get("assigned_admin_id"),
-                payload.get("created_at"),
-                payload.get("updated_at"),
-                {"legacy_payload": payload},
+                _dt(payload.get("created_at")),
+                _dt(payload.get("updated_at")),
+                meta_json,
             )
 
     async def get_support_ticket(self, ticket_id: int) -> dict[str, Any] | None:
@@ -241,6 +263,7 @@ class OperationsRepository:
         return [dict(row) for row in rows]
 
     async def add_support_message(self, payload: dict[str, Any]) -> None:
+        meta_json = json.dumps({"legacy_payload": payload}, ensure_ascii=False, default=str)
         async with self.db.pool.acquire() as conn:  # type: ignore[union-attr]
             await conn.execute(
                 """
@@ -263,8 +286,8 @@ class OperationsRepository:
                 str(payload.get("text") or ""),
                 str(payload.get("media_type") or ""),
                 str(payload.get("media_file_id") or ""),
-                payload.get("created_at"),
-                {"legacy_payload": payload},
+                _dt(payload.get("created_at")),
+                meta_json,
             )
 
     async def list_support_messages(self, ticket_id: int, *, limit: int = 100) -> list[dict[str, Any]]:
