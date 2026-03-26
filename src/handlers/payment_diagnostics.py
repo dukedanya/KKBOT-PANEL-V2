@@ -911,12 +911,15 @@ def _admin_section_keyboard() -> InlineKeyboardMarkup:
 
 def _admin_dashboard_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Платежи и диагностика", callback_data="adminmenu:payments")],
-        [InlineKeyboardButton(text="📈 Аналитика и отчёты", callback_data="adminmenu:analytics")],
-        [InlineKeyboardButton(text="📣 Рассылки и массовые действия", callback_data="adminmenu:bulk")],
-        [InlineKeyboardButton(text="⚙️ Сервис и настройки", callback_data="adminmenu:service")],
-        [InlineKeyboardButton(text="🤝 Рефералка и выводы", callback_data="admindash:referrals")],
-        [InlineKeyboardButton(text="🏆 Топ-10 рефералов", callback_data="admindash:topref")],
+        [
+            InlineKeyboardButton(text="👥 Пользователи", callback_data="adminmenu:users"),
+            InlineKeyboardButton(text="💳 Платежи", callback_data="adminmenu:payments"),
+        ],
+        [
+            InlineKeyboardButton(text="📈 Аналитика", callback_data="adminmenu:analytics"),
+            InlineKeyboardButton(text="📝 Контент и продажи", callback_data="adminmenu:content"),
+        ],
+        [InlineKeyboardButton(text="⚙️ Система и панель", callback_data="adminmenu:service")],
         [InlineKeyboardButton(text="🏠 Главное меню", callback_data="admin:exit")],
     ])
 
@@ -940,6 +943,20 @@ def _admin_payments_menu_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+def _admin_users_menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="👤 Карточка пользователя", callback_data="admin:user_lookup"),
+            InlineKeyboardButton(text="💸 Запросы на вывод", callback_data="admin:withdraw_requests"),
+        ],
+        [
+            InlineKeyboardButton(text="🆘 Ограничения поддержки", callback_data="admin:support_restrictions:list"),
+            InlineKeyboardButton(text="🛡 Blacklist поддержки", callback_data="admin:support_blacklist"),
+        ],
+        [InlineKeyboardButton(text="⬅️ К дашборду", callback_data="admin_dashboard")],
+    ])
+
+
 def _admin_analytics_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
@@ -950,7 +967,29 @@ def _admin_analytics_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="📊 Бот и подписки", callback_data="admindash:bot"),
             InlineKeyboardButton(text="🩺 Health", callback_data="admindash:health"),
         ],
+        [
+            InlineKeyboardButton(text="🤝 Рефералка и выводы", callback_data="admindash:referrals"),
+            InlineKeyboardButton(text="🏆 Топ-10 рефералов", callback_data="admindash:topref"),
+        ],
         [InlineKeyboardButton(text="🚨 Инциденты за день", callback_data="admindash:incidents:0")],
+        [InlineKeyboardButton(text="⬅️ К дашборду", callback_data="admin_dashboard")],
+    ])
+
+
+def _admin_content_menu_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📋 Тарифы", callback_data="admin:tariffs"),
+            InlineKeyboardButton(text="🏷 Промокоды", callback_data="admin:promo_menu"),
+        ],
+        [
+            InlineKeyboardButton(text="📝 Шаблоны", callback_data="admin:templates"),
+            InlineKeyboardButton(text="📣 Рассылки", callback_data="adminmenu:bulk"),
+        ],
+        [
+            InlineKeyboardButton(text="📨 Главное сообщение", callback_data="admin:main_message"),
+            InlineKeyboardButton(text="📦 Тестовая подписка", callback_data="admin:test_subscription"),
+        ],
         [InlineKeyboardButton(text="⬅️ К дашборду", callback_data="admin_dashboard")],
     ])
 
@@ -972,7 +1011,7 @@ def _admin_bulk_menu_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🎁 Пробный период без покупки", callback_data="bulk:prompt:broadcast:trial_only")],
         [InlineKeyboardButton(text="⏱ Продлить всем активным", callback_data="bulk:prompt:extend")],
         [InlineKeyboardButton(text="🧵 Очередь фоновых задач", callback_data="bulk:jobs")],
-        [InlineKeyboardButton(text="⬅️ К дашборду", callback_data="admin_dashboard")],
+        [InlineKeyboardButton(text="⬅️ К контенту", callback_data="adminmenu:content")],
     ])
 
 
@@ -980,24 +1019,17 @@ def _admin_service_menu_keyboard(*, safe_mode_enabled: bool = False) -> InlineKe
     safe_mode_label = "🧯 Safe mode: выключить" if safe_mode_enabled else "🧯 Safe mode: включить"
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="📋 Тарифы", callback_data="admin:tariffs"),
             InlineKeyboardButton(text="⭐ Stars", callback_data="admin:stars_settings"),
-        ],
-        [
-            InlineKeyboardButton(text="📦 Тестовая подписка", callback_data="admin:test_subscription"),
             InlineKeyboardButton(text="🤝 Реф. настройки", callback_data="admin:ref_settings"),
         ],
         [
-            InlineKeyboardButton(text="👤 Карточка пользователя", callback_data="admin:user_lookup"),
+            InlineKeyboardButton(text="📦 Тестовая подписка", callback_data="admin:test_subscription"),
             InlineKeyboardButton(text=safe_mode_label, callback_data="admin:safe_mode:toggle"),
         ],
         [
-            InlineKeyboardButton(text="🛡 Blacklist поддержки", callback_data="admin:support_blacklist"),
+            InlineKeyboardButton(text="🧩 Inbound панели", callback_data="admin:panel_inbounds"),
             InlineKeyboardButton(text="🗓 Инциденты за день", callback_data="admindash:incidents:0"),
         ],
-        [InlineKeyboardButton(text="🆘 Ограничения поддержки", callback_data="admin:support_restrictions:list")],
-        [InlineKeyboardButton(text="📝 Шаблоны", callback_data="admin:templates")],
-        [InlineKeyboardButton(text="💸 Запросы на вывод", callback_data="admin:withdraw_requests")],
         [InlineKeyboardButton(text="⬅️ К дашборду", callback_data="admin_dashboard")],
     ])
 
@@ -1170,6 +1202,20 @@ async def admin_payments_menu_callback(callback: CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data == "adminmenu:users")
+async def admin_users_menu_callback(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Недостаточно прав", show_alert=True)
+        return
+    await smart_edit_message(
+        callback.message,
+        "👥 <b>Пользователи и поддержка</b>\n\nКарточки пользователей, поддержка, ограничения и запросы на вывод.",
+        reply_markup=_admin_users_menu_keyboard(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
 @router.callback_query(F.data == "adminmenu:analytics")
 async def admin_analytics_menu_callback(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -1178,6 +1224,20 @@ async def admin_analytics_menu_callback(callback: CallbackQuery):
     await smart_edit_message(callback.message, 
         "📈 <b>Аналитика и отчёты</b>\n\nЕжедневные и периодные отчёты, воронка и состояние системы.",
         reply_markup=_admin_analytics_menu_keyboard(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "adminmenu:content")
+async def admin_content_menu_callback(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Недостаточно прав", show_alert=True)
+        return
+    await smart_edit_message(
+        callback.message,
+        "📝 <b>Контент и продажи</b>\n\nТарифы, промокоды, шаблоны, рассылки и тестовая выдача подписки.",
+        reply_markup=_admin_content_menu_keyboard(),
         parse_mode="HTML",
     )
     await callback.answer()
@@ -1203,7 +1263,7 @@ async def admin_service_menu_callback(callback: CallbackQuery, db: Database):
         return
     safe_mode_enabled = str(await db.get_setting("system:safe_mode", "0") or "0") == "1"
     await smart_edit_message(callback.message, 
-        "⚙️ <b>Сервис и настройки</b>\n\nТарифы, шаблоны, реферальные параметры, выводы и служебные действия.",
+        "⚙️ <b>Система и панель</b>\n\nПанель, safe mode, Stars, реферальные настройки и служебные действия.",
         reply_markup=_admin_service_menu_keyboard(safe_mode_enabled=safe_mode_enabled),
         parse_mode="HTML",
     )

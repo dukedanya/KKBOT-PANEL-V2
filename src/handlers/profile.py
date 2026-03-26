@@ -22,17 +22,6 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
-def _direct_slot_notice_lines() -> list[str]:
-    if not Config.DIRECT_SLOT_NOTICE_ENABLED:
-        return []
-    return [
-        "",
-        "ℹ️ <b>Учёт трафика</b>",
-        "Показанный остаток относится к контролируемому серверному каналу через VDS.",
-        "LTE Slot A/B/C в Happ сейчас выдаются как прямые CIDR-узлы, их трафик сервер автоматически не считает.",
-    ]
-
-
 def _payment_status_label(status: str) -> str:
     mapping = {
         "accepted": "оплачен",
@@ -62,13 +51,15 @@ async def render_profile_text(user_id: int, *, status: dict, panel: PanelAPI, db
     if not user_data or not active_sub:
         text = "\n".join(summary_lines + ["", "У вас нет активной подписки."])
     else:
+        legacy_user = await db.get_user(user_id) if hasattr(db, "get_user") else {}
+        legacy_user = legacy_user or {}
         base_email = await panel_base_email(user_id, db)
         client_stats = await panel.get_client_stats(base_email)
         total_snapshot = await get_total_traffic_snapshot_for_user(user_id, db)
-        plan_text = user_data.get("plan_text", "Неизвестно")
-        ip_limit = user_data.get("ip_limit", 0)
-        vpn_url = user_data.get("vpn_url", "")
-        traffic_gb = user_data.get("traffic_gb", 0)
+        plan_text = user_data.get("plan_text") or legacy_user.get("plan_text") or "Неизвестно"
+        ip_limit = int(user_data.get("ip_limit") or legacy_user.get("ip_limit") or 0)
+        vpn_url = user_data.get("vpn_url") or legacy_user.get("vpn_url") or ""
+        traffic_gb = float(user_data.get("traffic_gb") or legacy_user.get("traffic_gb") or 0)
         connection_info = render_connection_info(vpn_url, user_id=user_id, plan_name=plan_text)
 
         if total_snapshot and total_snapshot.fresh:
@@ -86,16 +77,10 @@ async def render_profile_text(user_id: int, *, status: dict, panel: PanelAPI, db
             else:
                 mode_label = "🟢 Обычный режим"
 
-            traffic_line = (
-                f"Остаток трафика: <b>{total_snapshot.remaining_gb:.1f} ГБ из {total_snapshot.quota_gb:.1f} ГБ</b>"
-                if total_snapshot.quota_bytes > 0
-                else f"Использовано трафика: <b>{total_snapshot.total_gb:.1f} ГБ</b>"
-            )
             sub_lines = [
                 "",
                 "📦 <b>Текущая подписка</b>",
                 f"Тариф: <b>{plan_text}</b>",
-                traffic_line,
                 f"Режим доступа: <b>{mode_label}</b>",
                 f"IP-адреса: <b>до {ip_limit}</b>",
                 f"Срок действия: <b>до {expiry_date}</b>",
@@ -105,10 +90,11 @@ async def render_profile_text(user_id: int, *, status: dict, panel: PanelAPI, db
             sub_lines.extend(
                 [
                     "",
+                    "🔗 <b>Ссылка на подключение</b>",
+                    "",
                     connection_info,
                 ]
             )
-            sub_lines.extend(_direct_slot_notice_lines())
         elif client_stats:
             used_bytes = 0
             expiry_time = 0
@@ -124,25 +110,24 @@ async def render_profile_text(user_id: int, *, status: dict, panel: PanelAPI, db
                 "",
                 "📦 <b>Текущая подписка</b>",
                 f"Тариф: <b>{plan_text}</b>",
-                f"Остаток трафика: <b>{remaining_gb:.1f} ГБ из {traffic_gb:.0f} ГБ</b>",
                 f"IP-адреса: <b>до {ip_limit}</b>",
                 f"Срок действия: <b>до {expiry_date}</b>",
                 "",
+                "🔗 <b>Ссылка на подключение</b>",
+                "",
                 connection_info,
             ]
-            sub_lines.extend(_direct_slot_notice_lines())
         else:
             sub_lines = [
                 "",
                 "📦 <b>Текущая подписка</b>",
                 f"Тариф: <b>{plan_text}</b>",
                 f"IP-адреса: <b>до {ip_limit}</b>",
-                f"Трафик: <b>{format_traffic(traffic_gb)}</b>",
-                connection_info,
                 "",
-                "<i>Общий traffic-state недоступен, показана статистика только панели</i>",
+                "🔗 <b>Ссылка на подключение</b>",
+                "",
+                connection_info,
             ]
-            sub_lines.extend(_direct_slot_notice_lines())
         text = "\n".join(summary_lines + sub_lines)
 
     if payments:
@@ -167,6 +152,8 @@ async def render_profile_text(user_id: int, *, status: dict, panel: PanelAPI, db
             text += f"\n• {plan_name} — {status_label}"
 
     return text
+
+
 
 
 async def show_profile_menu(user_id: int, *, db: Database, panel: PanelAPI, bot: Optional[Bot] = None, user_msg: Optional[Message] = None):

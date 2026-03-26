@@ -334,11 +334,13 @@ async def admin_menu(message: Message, bot: Bot):
         user_id,
         (
             "🛠️ <b>Админ панель</b>\n\n"
-            "Разделы отсортированы по задачам:\n"
-            "• 💳 Платежи и диагностика\n"
-            "• 📈 Аналитика и отчёты\n"
-            "• 📣 Рассылки и массовые действия\n"
-            "• ⚙️ Сервис и настройки"
+            "Разделы собраны по задачам:\n"
+            "• 🧭 Сводка\n"
+            "• 👥 Пользователи\n"
+            "• 💳 Платежи\n"
+            "• 📈 Аналитика\n"
+            "• 📝 Контент и продажи\n"
+            "• ⚙️ Система и панель"
         ),
         reply_markup=admin_menu_keyboard(),
         delete_user_msg=message,
@@ -724,11 +726,13 @@ async def back_to_admin(callback: CallbackQuery, bot: Bot):
             user_id,
             (
                 "🛠️ <b>Админ панель</b>\n\n"
-                "Разделы отсортированы по задачам:\n"
-                "• 💳 Платежи и диагностика\n"
-                "• 📈 Аналитика и отчёты\n"
-                "• 📣 Рассылки и массовые действия\n"
-                "• ⚙️ Сервис и настройки"
+                "Разделы собраны по задачам:\n"
+                "• 🧭 Сводка\n"
+                "• 👥 Пользователи\n"
+                "• 💳 Платежи\n"
+                "• 📈 Аналитика\n"
+                "• 📝 Контент и продажи\n"
+                "• ⚙️ Система и панель"
             ),
             reply_markup=admin_menu_keyboard(),
             bot=bot,
@@ -1299,7 +1303,7 @@ def _template_preview_keyboard(key: str) -> InlineKeyboardMarkup:
 def _template_confirm_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подтвердить", callback_data="admin:template_confirm")],
-        [InlineKeyboardButton(text="❌ Отмена", callback_data="admin:templates")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="admin:template_cancel")],
     ])
 
 
@@ -1320,7 +1324,8 @@ async def _render_template_item(message_obj, db: Database, key: str):
 
 
 @router.callback_query(F.data == "admin:templates")
-async def admin_templates_menu(callback: CallbackQuery):
+async def admin_templates_menu(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
     await smart_edit_message(
         callback.message,
         "📝 <b>Шаблоны сообщений</b>\n\nВыберите сообщение для редактирования.",
@@ -1360,7 +1365,8 @@ async def admin_template_variables_menu(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("admin:template:"))
-async def admin_template_item(callback: CallbackQuery, db: Database):
+async def admin_template_item(callback: CallbackQuery, db: Database, state: FSMContext):
+    await state.clear()
     key = callback.data.split(":", 2)[2]
     await _render_template_item(callback.message, db, key)
     await callback.answer()
@@ -1383,6 +1389,23 @@ async def admin_template_edit_prompt(callback: CallbackQuery, state: FSMContext)
         parse_mode="HTML",
     )
     await callback.answer()
+
+
+@router.callback_query(F.data == "admin:template_cancel")
+async def admin_template_cancel(callback: CallbackQuery, state: FSMContext, db: Database):
+    data = await state.get_data()
+    key = data.get("template_key")
+    await state.clear()
+    if key:
+        await _render_template_item(callback.message, db, key)
+    else:
+        await smart_edit_message(
+            callback.message,
+            "📝 <b>Шаблоны сообщений</b>\n\nВыберите сообщение для редактирования.",
+            reply_markup=_templates_menu_keyboard(),
+            parse_mode="HTML",
+        )
+    await callback.answer("Редактирование отменено")
 
 
 @router.message(TemplateEditFSM.content)

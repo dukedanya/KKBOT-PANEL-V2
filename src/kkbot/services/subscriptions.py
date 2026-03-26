@@ -112,6 +112,8 @@ async def get_subscription_status(user_id: int, db, panel) -> dict[str, Any]:
         current = await service.get_subscription_status(user_id)
         record = current.get("record") or {}
         meta = _normalize_meta(record.get("meta"))
+        legacy_user = await db.get_user(user_id) if hasattr(db, "get_user") else {}
+        legacy_user = legacy_user or {}
         expiry_raw = record.get("expires_at")
         expiry_dt = None
         if expiry_raw:
@@ -119,9 +121,20 @@ async def get_subscription_status(user_id: int, db, panel) -> dict[str, Any]:
                 expiry_dt = datetime.fromisoformat(str(expiry_raw).replace("Z", "+00:00"))
             except ValueError:
                 expiry_dt = None
+        plan_text = str(record.get("plan_code") or legacy_user.get("plan_text") or "")
+        vpn_url = str(meta.get("vpn_url") or legacy_user.get("vpn_url") or "")
+        ip_limit = int(meta.get("ip_limit") or legacy_user.get("ip_limit") or 0)
+        traffic_gb = float(record.get("traffic_limit_bytes") or 0) / (1024 * 1024 * 1024)
+        if traffic_gb <= 0:
+            traffic_gb = float(legacy_user.get("traffic_gb") or 0)
         return {
             "active": bool(current.get("active")),
-            "user": {"plan_text": record.get("plan_code", ""), "vpn_url": meta.get("vpn_url", "")},
+            "user": {
+                "plan_text": plan_text,
+                "vpn_url": vpn_url,
+                "ip_limit": ip_limit,
+                "traffic_gb": traffic_gb,
+            },
             "is_frozen": False,
             "frozen_until": None,
             "expiry_dt": expiry_dt,

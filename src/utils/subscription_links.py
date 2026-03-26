@@ -1,7 +1,7 @@
 import html
 import logging
 from typing import Optional
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlparse, urlunparse
 
 from config import Config
 
@@ -9,12 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 def render_direct_slot_notice() -> str:
-    if not getattr(Config, "DIRECT_SLOT_NOTICE_ENABLED", True):
-        return ""
-    return (
-        "ℹ️ Основной сервер работает через VDS и учитывается по серверному трафику.\n"
-        "LTE Slot A/B/C — это прямые CIDR-узлы без VDS в трафик-цепочке, их байты сервер автоматически не считает."
-    )
+    return ""
 
 
 def _build_subscription_name(*, user_id: Optional[int] = None, plan_name: Optional[str] = None) -> str:
@@ -90,6 +85,21 @@ def build_primary_subscription_url(*, client_uuid: str = "", sub_id: str = "") -
     return base_subscription_url
 
 
+def build_grace_subscription_url(vpn_url: str) -> str:
+    clean_url = (vpn_url or "").strip()
+    if not clean_url:
+        return ""
+    try:
+        parsed = urlparse(clean_url)
+        if "/sub/" not in parsed.path:
+            return ""
+        grace_path = parsed.path.replace("/sub/", "/sub-grace/", 1)
+        return urlunparse(parsed._replace(path=grace_path))
+    except Exception as exc:
+        logger.warning("Failed to build grace subscription URL: %s", exc)
+        return ""
+
+
 def render_connection_info(
     vpn_url: str,
     *,
@@ -102,14 +112,11 @@ def render_connection_info(
         return ""
 
     lines = [
-        "🔗 Подписка для Happ:",
+        "🔗 Ссылка на подключение для Happ:",
         f"<code>{html.escape(clean_url)}</code>",
         "",
         "Внутри этой ссылки бот отдаёт основной сервер и лучшие LTE/CIDR-слоты.",
     ]
-    notice = render_direct_slot_notice()
-    if notice:
-        lines.extend(["", notice])
     if include_sidr:
         sidr_url = build_sidr_subscription_url(clean_url, user_id=user_id, plan_name=plan_name)
         if sidr_url:

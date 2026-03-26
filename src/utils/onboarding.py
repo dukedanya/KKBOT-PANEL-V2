@@ -8,11 +8,11 @@ WINDOWS_URL = "https://github.com/Happ-proxy/happ-desktop/releases/latest/downlo
 
 def onboarding_text() -> str:
     return (
-        "🚀 <b>Быстрый старт</b>\n\n"
+        "📱 <b>Подключение</b>\n\n"
         "1. Выберите своё устройство.\n"
         "2. Установите клиент Happ.\n"
         "3. Откройте вашу ссылку подключения.\n"
-        "4. Если что-то не работает, нажмите «Автопомощь».\n"
+        "4. Если что-то не работает, напишите в поддержку.\n"
     )
 
 
@@ -23,7 +23,6 @@ def onboarding_keyboard(*, include_main_menu: bool = True) -> InlineKeyboardMark
             InlineKeyboardButton(text="🤖 Android", url=ANDROID_URL),
         ],
         [InlineKeyboardButton(text="🪟 Windows", url=WINDOWS_URL)],
-        [InlineKeyboardButton(text="🛠 Автопомощь", callback_data="help:auto:start")],
     ]
     if include_main_menu:
         rows.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="user_menu:main")])

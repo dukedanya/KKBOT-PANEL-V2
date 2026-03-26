@@ -65,7 +65,7 @@ def subscriptions_inline_keyboard(has_subscription: bool = False, is_admin: bool
             InlineKeyboardButton(text="🎁 Подарить", callback_data="buy:gift_prompt"),
             InlineKeyboardButton(text="🏷 Промокод", callback_data="buy:promo_prompt"),
         ],
-        [InlineKeyboardButton(text="🚀 Быстрый старт", callback_data="onboarding:start")],
+        [InlineKeyboardButton(text="📱 Подключение", callback_data="onboarding:start")],
     ]
     footer = [InlineKeyboardButton(text="🏠 Главное меню", callback_data="user_menu:main")]
     rows.append(footer)
@@ -77,14 +77,18 @@ def subscriptions_inline_keyboard(has_subscription: bool = False, is_admin: bool
 def admin_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🧭 Сводка (дашборд)", callback_data="admin_dashboard")],
-            [InlineKeyboardButton(text="💳 Платежи и диагностика", callback_data="adminmenu:payments")],
-            [InlineKeyboardButton(text="📈 Аналитика и отчёты", callback_data="adminmenu:analytics")],
-            [InlineKeyboardButton(text="📣 Рассылки и массовые действия", callback_data="adminmenu:bulk")],
-            [InlineKeyboardButton(text="🏷 Промокоды", callback_data="admin:promo_menu")],
-            [InlineKeyboardButton(text="⚙️ Сервис и настройки", callback_data="adminmenu:service")],
-            [InlineKeyboardButton(text="🤝 Рефералка и выводы", callback_data="admindash:referrals")],
-            [InlineKeyboardButton(text="🏆 Топ рефералов", callback_data="admindash:topref")],
+            [
+                InlineKeyboardButton(text="🧭 Сводка", callback_data="admin_dashboard"),
+                InlineKeyboardButton(text="👥 Пользователи", callback_data="adminmenu:users"),
+            ],
+            [
+                InlineKeyboardButton(text="💳 Платежи", callback_data="adminmenu:payments"),
+                InlineKeyboardButton(text="📈 Аналитика", callback_data="adminmenu:analytics"),
+            ],
+            [
+                InlineKeyboardButton(text="📝 Контент и продажи", callback_data="adminmenu:content"),
+                InlineKeyboardButton(text="⚙️ Система и панель", callback_data="adminmenu:service"),
+            ],
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="user_menu:main")],
         ]
     )
@@ -110,7 +114,7 @@ def support_menu_keyboard() -> InlineKeyboardMarkup:
 def instruction_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="🚀 Быстрый старт", callback_data="onboarding:start")],
+            [InlineKeyboardButton(text="📱 Подключение", callback_data="onboarding:start")],
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="user_menu:main")],
         ]
     )
