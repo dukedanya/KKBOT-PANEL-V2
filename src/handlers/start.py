@@ -258,8 +258,8 @@ async def cmd_start(message: Message, state: FSMContext, db: Database, panel: Pa
         except Exception:
             await message.answer("❌ Не удалось определить пользователя.", parse_mode="HTML")
             return
-        from handlers.payment_diagnostics import _send_user_card
-        await _send_user_card(message, db, target_user_id, state=state)
+        from handlers.admin_user_card import _send_user_card
+        await _send_user_card(message, db, target_user_id, panel=panel, state=state)
         return
     if ref_param == "connect":
         await message.answer(onboarding_text(), parse_mode="HTML", reply_markup=onboarding_keyboard())

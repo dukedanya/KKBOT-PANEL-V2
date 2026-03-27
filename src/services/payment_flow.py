@@ -8,6 +8,7 @@ from config import Config
 from db import Database
 from kkbot.services.subscriptions import (
     create_subscription,
+    get_subscription_status as get_runtime_subscription_status,
     get_remaining_active_days,
     reward_referrer_percent,
 )
@@ -32,6 +33,15 @@ async def _call_db_method(db, method_name: str, *args, **kwargs):
         return await method(*args, **kwargs)
     except TypeError:
         return await method(*args)
+
+
+async def _payment_has_live_access(user_id: int, db: Database, panel: PanelAPI) -> bool:
+    try:
+        status = await get_runtime_subscription_status(user_id, db=db, panel=panel)
+    except Exception as exc:
+        logger.warning("subscription status check failed during payment recovery user=%s error=%s", user_id, exc)
+        return False
+    return bool(status.get("active")) and bool((status.get("user") or {}).get("vpn_url"))
 
 
 async def _maybe_restore_pending_referrer_for_payment(
@@ -142,10 +152,7 @@ async def apply_referral_reward(user_id: int, amount: float, user_data: Optional
     if not ref_by or ref_rewarded:
         return
 
-    referrer = await db.get_user(ref_by)
-    if referrer:
-        await reward_referrer_percent(user_id, amount, db=db)
-
+    await reward_referrer_percent(user_id, amount, db=db)
     await db.mark_ref_rewarded(user_id)
 
 
@@ -178,8 +185,10 @@ async def process_successful_payment(
     if current_payment:
         current_status = current_payment.get("status")
         if current_status == "accepted":
-            logger.info("Payment already accepted: %s", payment_id)
-            return {"ok": True, "already_processed": True, "payment_id": payment_id, "user_id": recipient_user_id, "plan": plan}
+            if await _payment_has_live_access(recipient_user_id, db, panel):
+                logger.info("Payment already accepted: %s", payment_id)
+                return {"ok": True, "already_processed": True, "payment_id": payment_id, "user_id": recipient_user_id, "plan": plan}
+            logger.warning("Accepted payment without active access, continuing recovery: %s", payment_id)
         if current_status == "rejected":
             logger.warning("Payment already rejected: %s", payment_id)
             return {"ok": False, "reason": "already_rejected", "payment_id": payment_id, "user_id": recipient_user_id, "plan": plan}
@@ -198,7 +207,9 @@ async def process_successful_payment(
         refreshed_status = (refreshed or {}).get("status")
         logger.warning("Payment claim failed: payment=%s current_status=%s", payment_id, refreshed_status)
         if refreshed_status == "accepted":
-            return {"ok": True, "already_processed": True, "payment_id": payment_id, "user_id": recipient_user_id, "plan": plan}
+            if await _payment_has_live_access(recipient_user_id, db, panel):
+                return {"ok": True, "already_processed": True, "payment_id": payment_id, "user_id": recipient_user_id, "plan": plan}
+            logger.warning("Accepted payment without active access after claim failure, continuing recovery: %s", payment_id)
         if refreshed_status == "processing":
             return {"ok": False, "reason": "already_processing", "payment_id": payment_id, "user_id": recipient_user_id, "plan": plan}
         return {"ok": False, "reason": "claim_failed", "payment_id": payment_id, "user_id": recipient_user_id, "plan": plan}

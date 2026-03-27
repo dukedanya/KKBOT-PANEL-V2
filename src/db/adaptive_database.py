@@ -146,6 +146,10 @@ class Database:
             "frozen_until": None,
         }
 
+    async def _get_analytics_reset_cutoff(self, key: str) -> datetime | None:
+        raw = await self.get_setting(key, "") if hasattr(self, "get_setting") else ""
+        return _parse_utc_iso_dt(raw)
+
     async def _store_user_payload(self, payload: dict[str, Any]) -> None:
         meta = self._meta_repo()
         repo = self._user_repo()
@@ -607,6 +611,58 @@ class Database:
             return await self.legacy.get_period_user_acquisition_report(days=days, end_days_ago=end_days_ago)
         return {"start_date": "", "end_date": "", "days": days, "new_users": 0, "referred_new_users": 0, "trial_started_new_users": 0}
 
+    async def get_user_acquisition_report_between(self, *, start_date: str, end_date: str) -> dict[str, Any]:
+        start_date_value = datetime.fromisoformat(str(start_date)).date()
+        end_date_value = datetime.fromisoformat(str(end_date)).date()
+        if self.postgres is not None and self.postgres.pool is not None:
+            async with self.postgres.pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT
+                        $1::date AS start_date,
+                        $2::date AS end_date,
+                        COUNT(*) AS new_users,
+                        COUNT(*) FILTER (WHERE COALESCE((payload->>'ref_by')::bigint, 0) > 0) AS referred_new_users,
+                        COUNT(*) FILTER (WHERE COALESCE((payload->>'trial_used')::int, 0) = 1) AS trial_started_new_users
+                    FROM legacy_users_archive
+                    WHERE DATE(COALESCE(NULLIF(payload->>'join_date', '')::timestamptz, imported_at))
+                          BETWEEN $1::date AND $2::date
+                    """,
+                    start_date_value,
+                    end_date_value,
+                )
+            return {
+                "start_date": str(row["start_date"] or start_date),
+                "end_date": str(row["end_date"] or end_date),
+                "new_users": int(row["new_users"] or 0),
+                "referred_new_users": int(row["referred_new_users"] or 0),
+                "trial_started_new_users": int(row["trial_started_new_users"] or 0),
+            }
+        return {"start_date": start_date, "end_date": end_date, "new_users": 0, "referred_new_users": 0, "trial_started_new_users": 0}
+
+    async def get_total_user_acquisition_report(self) -> dict[str, Any]:
+        if self.postgres is not None and self.postgres.pool is not None:
+            async with self.postgres.pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT
+                        MIN(DATE(COALESCE(NULLIF(payload->>'join_date', '')::timestamptz, imported_at))) AS start_date,
+                        CURRENT_DATE AS end_date,
+                        COUNT(*) AS new_users,
+                        COUNT(*) FILTER (WHERE COALESCE((payload->>'ref_by')::bigint, 0) > 0) AS referred_new_users,
+                        COUNT(*) FILTER (WHERE COALESCE((payload->>'trial_used')::int, 0) = 1) AS trial_started_new_users
+                    FROM legacy_users_archive
+                    """
+                )
+            return {
+                "start_date": str(row["start_date"] or ""),
+                "end_date": str(row["end_date"] or ""),
+                "new_users": int(row["new_users"] or 0),
+                "referred_new_users": int(row["referred_new_users"] or 0),
+                "trial_started_new_users": int(row["trial_started_new_users"] or 0),
+            }
+        return {"start_date": "", "end_date": "", "new_users": 0, "referred_new_users": 0, "trial_started_new_users": 0}
+
     async def get_daily_subscription_sales_report(self, *, days_ago: int = 0) -> dict[str, Any]:
         return await self.get_period_subscription_sales_report(days=1, end_days_ago=max(0, int(days_ago)))
 
@@ -614,15 +670,23 @@ class Database:
         days = max(1, int(days))
         end_days_ago = max(0, int(end_days_ago))
         start_days_ago = end_days_ago + days - 1
+        balance_reset_at = await self._get_analytics_reset_cutoff("analytics:internal_balance_reset_at")
+        admin_balance_reset_at = await self._get_analytics_reset_cutoff("analytics:admin_balance_issued_reset_at")
         if self.postgres is not None and self.postgres.pool is not None:
             async with self.postgres.pool.acquire() as conn:
                 accepted_row = await conn.fetchrow(
                     """
                     SELECT
                         COUNT(DISTINCT h.payment_id) FILTER (WHERE p.provider <> 'balance') AS subscriptions_bought,
-                        COUNT(DISTINCT h.payment_id) FILTER (WHERE p.provider = 'balance') AS internal_balance_subscriptions,
+                        COUNT(DISTINCT h.payment_id) FILTER (
+                            WHERE p.provider = 'balance'
+                              AND ($3::timestamptz IS NULL OR h.created_at >= $3::timestamptz)
+                        ) AS internal_balance_subscriptions,
                         COALESCE(SUM(p.amount) FILTER (WHERE p.provider <> 'balance'), 0) AS gross_revenue,
-                        COALESCE(SUM(p.amount) FILTER (WHERE p.provider = 'balance'), 0) AS internal_balance_spent
+                        COALESCE(SUM(p.amount) FILTER (
+                            WHERE p.provider = 'balance'
+                              AND ($3::timestamptz IS NULL OR h.created_at >= $3::timestamptz)
+                        ), 0) AS internal_balance_spent
                     FROM payment_status_history h
                     JOIN payment_intents p ON p.payment_id = h.payment_id
                     WHERE h.to_status = 'accepted'
@@ -632,6 +696,7 @@ class Database:
                     """,
                     start_days_ago,
                     end_days_ago,
+                    balance_reset_at,
                 )
                 refunded_row = await conn.fetchrow(
                     """
@@ -672,12 +737,14 @@ class Database:
                     ) AS admin_balance_issued
                     FROM admin_user_actions
                     WHERE action = 'balance_adjustment'
+                      AND ($3::timestamptz IS NULL OR created_at >= $3::timestamptz)
                       AND DATE(created_at) BETWEEN
                           (CURRENT_DATE - ($1::int || ' days')::interval)::date AND
                           (CURRENT_DATE - ($2::int || ' days')::interval)::date
                     """,
                     start_days_ago,
                     end_days_ago,
+                    admin_balance_reset_at,
                 )
             subscriptions_bought = int((accepted_row["subscriptions_bought"] if accepted_row else 0) or 0)
             internal_balance_subscriptions = int((accepted_row["internal_balance_subscriptions"] if accepted_row else 0) or 0)
@@ -705,20 +772,186 @@ class Database:
             return await self.legacy.get_period_subscription_sales_report(days=days, end_days_ago=end_days_ago)
         return {"start_date": "", "end_date": "", "days": days, "subscriptions_bought": 0, "internal_balance_subscriptions": 0, "gross_revenue": 0.0, "internal_balance_spent": 0.0, "refunded_revenue": 0.0, "net_revenue": 0.0, "referral_cost": 0.0, "admin_balance_issued": 0.0, "estimated_profit": 0.0}
 
+    async def get_subscription_sales_report_between(self, *, start_date: str, end_date: str) -> dict[str, Any]:
+        start_date_value = datetime.fromisoformat(str(start_date)).date()
+        end_date_value = datetime.fromisoformat(str(end_date)).date()
+        balance_reset_at = await self._get_analytics_reset_cutoff("analytics:internal_balance_reset_at")
+        admin_balance_reset_at = await self._get_analytics_reset_cutoff("analytics:admin_balance_issued_reset_at")
+        if self.postgres is not None and self.postgres.pool is not None:
+            async with self.postgres.pool.acquire() as conn:
+                accepted_row = await conn.fetchrow(
+                    """
+                    SELECT
+                        COUNT(DISTINCT h.payment_id) FILTER (WHERE p.provider <> 'balance') AS subscriptions_bought,
+                        COUNT(DISTINCT h.payment_id) FILTER (
+                            WHERE p.provider = 'balance'
+                              AND ($3::timestamptz IS NULL OR h.created_at >= $3::timestamptz)
+                        ) AS internal_balance_subscriptions,
+                        COALESCE(SUM(p.amount) FILTER (WHERE p.provider <> 'balance'), 0) AS gross_revenue,
+                        COALESCE(SUM(p.amount) FILTER (
+                            WHERE p.provider = 'balance'
+                              AND ($3::timestamptz IS NULL OR h.created_at >= $3::timestamptz)
+                        ), 0) AS internal_balance_spent
+                    FROM payment_status_history h
+                    JOIN payment_intents p ON p.payment_id = h.payment_id
+                    WHERE h.to_status = 'accepted'
+                      AND DATE(h.created_at) BETWEEN $1::date AND $2::date
+                    """,
+                    start_date_value,
+                    end_date_value,
+                    balance_reset_at,
+                )
+                refunded_row = await conn.fetchrow(
+                    """
+                    SELECT COALESCE(SUM(p.amount) FILTER (WHERE p.provider <> 'balance'), 0) AS refunded_revenue
+                    FROM payment_status_history h
+                    JOIN payment_intents p ON p.payment_id = h.payment_id
+                    WHERE h.to_status = 'refunded'
+                      AND DATE(h.created_at) BETWEEN $1::date AND $2::date
+                    """,
+                    start_date_value,
+                    end_date_value,
+                )
+                referral_row = await conn.fetchrow(
+                    """
+                    SELECT COALESCE(SUM(amount), 0) AS referral_cost
+                    FROM ref_history
+                    WHERE DATE(created_at) BETWEEN $1::date AND $2::date
+                    """,
+                    start_date_value,
+                    end_date_value,
+                )
+                admin_balance_row = await conn.fetchrow(
+                    """
+                    SELECT COALESCE(
+                        SUM(
+                            CASE
+                                WHEN split_part(details, ' ', 1) ~ '^[+-]?[0-9]+(\\.[0-9]+)?$'
+                                     AND split_part(details, ' ', 1)::numeric > 0
+                                THEN split_part(details, ' ', 1)::numeric
+                                ELSE 0
+                            END
+                        ),
+                        0
+                    ) AS admin_balance_issued
+                    FROM admin_user_actions
+                    WHERE action = 'balance_adjustment'
+                      AND ($3::timestamptz IS NULL OR created_at >= $3::timestamptz)
+                      AND DATE(created_at) BETWEEN $1::date AND $2::date
+                    """,
+                    start_date_value,
+                    end_date_value,
+                    admin_balance_reset_at,
+                )
+            subscriptions_bought = int((accepted_row["subscriptions_bought"] if accepted_row else 0) or 0)
+            internal_balance_subscriptions = int((accepted_row["internal_balance_subscriptions"] if accepted_row else 0) or 0)
+            gross_revenue = float((accepted_row["gross_revenue"] if accepted_row else 0.0) or 0.0)
+            internal_balance_spent = float((accepted_row["internal_balance_spent"] if accepted_row else 0.0) or 0.0)
+            refunded_revenue = float((refunded_row["refunded_revenue"] if refunded_row else 0.0) or 0.0)
+            referral_cost = float((referral_row["referral_cost"] if referral_row else 0.0) or 0.0)
+            admin_balance_issued = float((admin_balance_row["admin_balance_issued"] if admin_balance_row else 0.0) or 0.0)
+            net_revenue = gross_revenue - refunded_revenue
+            return {
+                "start_date": start_date,
+                "end_date": end_date,
+                "subscriptions_bought": subscriptions_bought,
+                "internal_balance_subscriptions": internal_balance_subscriptions,
+                "gross_revenue": gross_revenue,
+                "internal_balance_spent": internal_balance_spent,
+                "refunded_revenue": refunded_revenue,
+                "net_revenue": net_revenue,
+                "referral_cost": referral_cost,
+                "admin_balance_issued": admin_balance_issued,
+                "estimated_profit": net_revenue - referral_cost,
+            }
+        return {"start_date": start_date, "end_date": end_date, "subscriptions_bought": 0, "internal_balance_subscriptions": 0, "gross_revenue": 0.0, "internal_balance_spent": 0.0, "refunded_revenue": 0.0, "net_revenue": 0.0, "referral_cost": 0.0, "admin_balance_issued": 0.0, "estimated_profit": 0.0}
+
+    async def get_total_subscription_sales_report(self) -> dict[str, Any]:
+        balance_reset_at = await self._get_analytics_reset_cutoff("analytics:internal_balance_reset_at")
+        admin_balance_reset_at = await self._get_analytics_reset_cutoff("analytics:admin_balance_issued_reset_at")
+        if self.postgres is not None and self.postgres.pool is not None:
+            async with self.postgres.pool.acquire() as conn:
+                payment_row = await conn.fetchrow(
+                    """
+                    SELECT
+                        MIN(created_at)::date AS start_date,
+                        CURRENT_DATE AS end_date,
+                        COUNT(*) FILTER (WHERE status = ANY($1::text[]) AND provider <> 'balance') AS subscriptions_bought,
+                        COUNT(*) FILTER (
+                            WHERE status = ANY($1::text[]) AND provider = 'balance'
+                              AND ($2::timestamptz IS NULL OR created_at >= $2::timestamptz)
+                        ) AS internal_balance_subscriptions,
+                        COALESCE(SUM(CASE WHEN status = ANY($1::text[]) AND provider <> 'balance' THEN amount ELSE 0 END), 0) AS gross_revenue,
+                        COALESCE(SUM(CASE WHEN status = ANY($1::text[]) AND provider = 'balance'
+                              AND ($2::timestamptz IS NULL OR created_at >= $2::timestamptz) THEN amount ELSE 0 END), 0) AS internal_balance_spent,
+                        COALESCE(SUM(CASE WHEN status = 'refunded' AND provider <> 'balance' THEN amount ELSE 0 END), 0) AS refunded_revenue
+                    FROM payment_intents
+                    """,
+                    ["accepted", "refunded"],
+                    balance_reset_at,
+                )
+                referral_row = await conn.fetchrow("SELECT COALESCE(SUM(amount), 0) AS referral_cost FROM ref_history")
+                admin_balance_row = await conn.fetchrow(
+                    """
+                    SELECT COALESCE(
+                        SUM(
+                            CASE
+                                WHEN split_part(details, ' ', 1) ~ '^[+-]?[0-9]+(\\.[0-9]+)?$'
+                                     AND split_part(details, ' ', 1)::numeric > 0
+                                     AND ($1::timestamptz IS NULL OR created_at >= $1::timestamptz)
+                                THEN split_part(details, ' ', 1)::numeric
+                                ELSE 0
+                            END
+                        ),
+                        0
+                    ) AS admin_balance_issued
+                    FROM admin_user_actions
+                    WHERE action = 'balance_adjustment'
+                    """,
+                    admin_balance_reset_at,
+                )
+            gross_revenue = float((payment_row["gross_revenue"] if payment_row else 0.0) or 0.0)
+            internal_balance_spent = float((payment_row["internal_balance_spent"] if payment_row else 0.0) or 0.0)
+            refunded_revenue = float((payment_row["refunded_revenue"] if payment_row else 0.0) or 0.0)
+            referral_cost = float((referral_row["referral_cost"] if referral_row else 0.0) or 0.0)
+            admin_balance_issued = float((admin_balance_row["admin_balance_issued"] if admin_balance_row else 0.0) or 0.0)
+            net_revenue = gross_revenue - refunded_revenue
+            return {
+                "start_date": str(payment_row["start_date"] or ""),
+                "end_date": str(payment_row["end_date"] or ""),
+                "subscriptions_bought": int((payment_row["subscriptions_bought"] if payment_row else 0) or 0),
+                "internal_balance_subscriptions": int((payment_row["internal_balance_subscriptions"] if payment_row else 0) or 0),
+                "gross_revenue": gross_revenue,
+                "internal_balance_spent": internal_balance_spent,
+                "refunded_revenue": refunded_revenue,
+                "net_revenue": net_revenue,
+                "referral_cost": referral_cost,
+                "admin_balance_issued": admin_balance_issued,
+                "estimated_profit": net_revenue - referral_cost,
+            }
+        return {"start_date": "", "end_date": "", "subscriptions_bought": 0, "internal_balance_subscriptions": 0, "gross_revenue": 0.0, "internal_balance_spent": 0.0, "refunded_revenue": 0.0, "net_revenue": 0.0, "referral_cost": 0.0, "admin_balance_issued": 0.0, "estimated_profit": 0.0}
+
     async def get_total_revenue_summary(self) -> dict[str, Any]:
+        balance_reset_at = await self._get_analytics_reset_cutoff("analytics:internal_balance_reset_at")
+        admin_balance_reset_at = await self._get_analytics_reset_cutoff("analytics:admin_balance_issued_reset_at")
         if self.postgres is not None and self.postgres.pool is not None:
             async with self.postgres.pool.acquire() as conn:
                 payment_row = await conn.fetchrow(
                     """
                     SELECT
                         COUNT(*) FILTER (WHERE status = ANY($1::text[]) AND provider <> 'balance') AS accepted_payments,
-                        COUNT(*) FILTER (WHERE status = ANY($1::text[]) AND provider = 'balance') AS internal_balance_payments,
+                        COUNT(*) FILTER (
+                            WHERE status = ANY($1::text[]) AND provider = 'balance'
+                              AND ($2::timestamptz IS NULL OR created_at >= $2::timestamptz)
+                        ) AS internal_balance_payments,
                         COALESCE(SUM(CASE WHEN status = ANY($1::text[]) AND provider <> 'balance' THEN amount ELSE 0 END), 0) AS gross_revenue,
-                        COALESCE(SUM(CASE WHEN status = ANY($1::text[]) AND provider = 'balance' THEN amount ELSE 0 END), 0) AS internal_balance_spent,
+                        COALESCE(SUM(CASE WHEN status = ANY($1::text[]) AND provider = 'balance'
+                              AND ($2::timestamptz IS NULL OR created_at >= $2::timestamptz) THEN amount ELSE 0 END), 0) AS internal_balance_spent,
                         COALESCE(SUM(CASE WHEN status = 'refunded' AND provider <> 'balance' THEN amount ELSE 0 END), 0) AS refunded_revenue
                     FROM payment_intents
                     """,
                     ["accepted", "refunded"],
+                    balance_reset_at,
                 )
                 referral_row = await conn.fetchrow("SELECT COALESCE(SUM(amount), 0) AS referral_cost FROM ref_history")
                 admin_balance_row = await conn.fetchrow(
@@ -736,7 +969,9 @@ class Database:
                     ) AS admin_balance_issued
                     FROM admin_user_actions
                     WHERE action = 'balance_adjustment'
-                    """
+                      AND ($1::timestamptz IS NULL OR created_at >= $1::timestamptz)
+                    """,
+                    admin_balance_reset_at,
                 )
             gross_revenue = float((payment_row["gross_revenue"] if payment_row else 0.0) or 0.0)
             internal_balance_spent = float((payment_row["internal_balance_spent"] if payment_row else 0.0) or 0.0)

@@ -6,6 +6,22 @@ from typing import Any
 from kkbot.db.postgres import PostgresDatabase
 
 
+def _coerce_payload_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return {}
+        if isinstance(parsed, dict):
+            return dict(parsed)
+    return {}
+
+
 class UserRepository:
     def __init__(self, db: PostgresDatabase):
         self.db = db
@@ -137,7 +153,12 @@ class UserRepository:
                 ORDER BY user_id ASC
                 """
             )
-        return [dict(row["payload"]) for row in rows]
+        result: list[dict[str, Any]] = []
+        for row in rows:
+            payload = _coerce_payload_dict(row["payload"])
+            if payload:
+                result.append(payload)
+        return result
 
     async def list_suspicious_referrals(self, *, limit: int = 20) -> list[dict[str, Any]]:
         async with self.db.pool.acquire() as conn:  # type: ignore[union-attr]

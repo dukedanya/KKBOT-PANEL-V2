@@ -2,7 +2,28 @@ from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.utils.callback_answer import CallbackAnswerMiddleware
 
-from handlers import admin, admin_broadcast, admin_health, buy, fallback, inline, payment_admin, payment_diagnostics, profile, referral, start, support_chat
+from handlers import (
+    admin,
+    admin_analytics,
+    admin_broadcast,
+    admin_health,
+    admin_overview,
+    admin_tariffs,
+    admin_promos,
+    admin_settings,
+    admin_templates,
+    admin_user_card,
+    buy,
+    fallback,
+    inline,
+    payment_admin,
+    payment_diagnostics,
+    admin_operations,
+    profile,
+    referral,
+    start,
+    support_chat,
+)
 from middlewares.ban import ban_middleware
 from middlewares.callback_dedup import callback_dedup_middleware
 from middlewares.error_guard import error_guard_middleware
@@ -31,8 +52,16 @@ def build_dispatcher(*, bot: Bot, db, panel, payment_gateway) -> Dispatcher:
     dp.include_router(buy.router)
     dp.include_router(payment_admin.router)
     dp.include_router(payment_diagnostics.router)
+    dp.include_router(admin_user_card.router)
+    dp.include_router(admin_analytics.router)
+    dp.include_router(admin_operations.router)
+    dp.include_router(admin_settings.router)
+    dp.include_router(admin_templates.router)
+    dp.include_router(admin_overview.router)
+    dp.include_router(admin_tariffs.router)
     dp.include_router(referral.router)
     dp.include_router(admin.router)
+    dp.include_router(admin_promos.router)
     dp.include_router(admin_broadcast.router)
     dp.include_router(support_chat.router)
     dp.include_router(inline.router)

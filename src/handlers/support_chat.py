@@ -97,6 +97,29 @@ def _admin_ticket_keyboard(ticket_id: int, user_id: int, *, assignee_id: int = 0
     )
 
 
+def _admin_support_list_keyboard(tickets: list[dict]) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for ticket in tickets[:20]:
+        ticket_id = int(ticket.get("id") or 0)
+        user_id = int(ticket.get("user_id") or 0)
+        status = format_support_status(str(ticket.get("status") or ""))
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=f"#{ticket_id} • {user_id} • {status}",
+                    callback_data=f"admin:support_ticket:{ticket_id}",
+                )
+            ]
+        )
+    rows.append([InlineKeyboardButton(text="⬅️ К пользователям", callback_data="adminmenu:users")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _admin_support_detail_keyboard(ticket_id: int, user_id: int, *, assignee_id: int = 0) -> InlineKeyboardMarkup:
+    base = _admin_ticket_keyboard(ticket_id, user_id, assignee_id=assignee_id).inline_keyboard
+    return InlineKeyboardMarkup(inline_keyboard=[*base, [InlineKeyboardButton(text="⬅️ К тикетам", callback_data="admin:support_tickets")]])
+
+
 def _user_ticket_keyboard(ticket_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[[
@@ -164,13 +187,15 @@ def _match_support_autohelp(text: str) -> tuple[str, str]:
     return "", ""
 
 
-def _format_support_dt(value: str) -> str:
+def _format_support_dt(value) -> str:
     if not value:
         return "неизвестно"
+    if isinstance(value, datetime):
+        return value.strftime("%d.%m.%Y %H:%M")
     try:
-        return datetime.fromisoformat(value).strftime("%d.%m.%Y %H:%M")
+        return datetime.fromisoformat(str(value)).strftime("%d.%m.%Y %H:%M")
     except ValueError:
-        return value
+        return str(value)
 
 
 def _trim_text(value: str, limit: int = 40) -> str:
@@ -188,6 +213,15 @@ def _safe_support_text(value: str) -> str:
 
 def _ticket_assignee_key(ticket_id: int) -> str:
     return f"support:assignee:{int(ticket_id)}"
+
+
+async def _get_user_active_support_ticket_id(db: Database, user_id: int) -> int:
+    tickets = await db.list_user_support_tickets(int(user_id), limit=10)
+    for ticket in tickets:
+        status = str(ticket.get("status") or "").strip().lower()
+        if status != "closed":
+            return int(ticket.get("id") or 0)
+    return 0
 
 
 async def _get_ticket_assignee(db: Database, ticket_id: int) -> int:
@@ -373,6 +407,38 @@ async def _render_support_ticket_view(db: Database, ticket: dict, *, limit: int 
     return "\n".join(lines)
 
 
+async def _render_admin_support_tickets_list(db: Database, *, limit: int = 20) -> tuple[str, list[dict]]:
+    tickets = await db.list_open_support_tickets(limit=limit)
+    lines = [
+        "🆘 <b>Тикеты поддержки</b>",
+        "",
+        f"Открыто сейчас: <b>{len(tickets)}</b>",
+    ]
+    if not tickets:
+        lines.append("\nОткрытых тикетов сейчас нет.")
+        return "\n".join(lines), tickets
+    lines.append("\n<b>Последние открытые</b>")
+    for ticket in tickets:
+        ticket_id = int(ticket.get("id") or 0)
+        user_id = int(ticket.get("user_id") or 0)
+        status = format_support_status(str(ticket.get("status") or ""))
+        updated_at = _format_support_dt(str(ticket.get("updated_at") or ticket.get("created_at") or ""))
+        preview = await db.get_last_support_message(ticket_id)
+        preview_text = preview.get("text") if preview else ""
+        preview_body = _safe_support_text(
+            _trim_text(preview_text or ("Фото без подписи" if preview and preview.get("media_type") == "photo" else "Без сообщений"), 80)
+        )
+        lines.extend(
+            [
+                "",
+                f"• <b>#{ticket_id}</b> — user <code>{user_id}</code>",
+                f"  {status} • {updated_at}",
+                f"  {preview_body}",
+            ]
+        )
+    return "\n".join(lines), tickets
+
+
 @router.callback_query(F.data == "support:history")
 async def support_history(callback: CallbackQuery, db: Database):
     tickets = await db.list_user_support_tickets(callback.from_user.id, limit=10)
@@ -407,6 +473,43 @@ async def support_history(callback: CallbackQuery, db: Database):
     await callback.answer()
 
 
+@router.callback_query(F.data == "admin:support_tickets")
+async def admin_support_tickets(callback: CallbackQuery, db: Database):
+    if callback.from_user.id not in Config.ADMIN_USER_IDS:
+        await callback.answer("⛔ Недостаточно прав", show_alert=True)
+        return
+    text, tickets = await _render_admin_support_tickets_list(db, limit=20)
+    await smart_edit_message(
+        callback.message,
+        text,
+        parse_mode="HTML",
+        reply_markup=_admin_support_list_keyboard(tickets),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:support_ticket:"))
+async def admin_support_ticket_view(callback: CallbackQuery, db: Database):
+    if callback.from_user.id not in Config.ADMIN_USER_IDS:
+        await callback.answer("⛔ Недостаточно прав", show_alert=True)
+        return
+    ticket_id = int(callback.data.split(":")[2])
+    ticket = await db.get_support_ticket(ticket_id)
+    if not ticket:
+        await callback.answer("Тикет не найден", show_alert=True)
+        return
+    text = await _render_support_ticket_view(db, ticket, limit=15)
+    user_id = int(ticket.get("user_id") or 0)
+    assignee_id = await _get_ticket_assignee(db, ticket_id)
+    await smart_edit_message(
+        callback.message,
+        text,
+        parse_mode="HTML",
+        reply_markup=_admin_support_detail_keyboard(ticket_id, user_id, assignee_id=assignee_id),
+    )
+    await callback.answer()
+
+
 @router.callback_query(F.data.startswith("support:view:"))
 async def support_view_ticket(callback: CallbackQuery, db: Database):
     ticket_id = int(callback.data.split(":")[2])
@@ -429,11 +532,23 @@ async def support_view_ticket(callback: CallbackQuery, db: Database):
 async def support_start(callback: CallbackQuery, state: FSMContext, db: Database):
     if not await _ensure_support_available(callback, db):
         return
+    active_ticket_id = await _get_user_active_support_ticket_id(db, callback.from_user.id)
     await state.set_state(SupportFSM.waiting_user_message)
-    await state.update_data(ticket_id=None)
+    await state.update_data(ticket_id=active_ticket_id or None)
+    if active_ticket_id:
+        text = (
+            "💬 <b>Ваш вопрос ещё открыт</b>\n\n"
+            f"Обращение: <code>#{active_ticket_id}</code>\n"
+            "Просто напишите следующим сообщением, что хотите добавить, и я передам это в поддержку."
+        )
+    else:
+        text = (
+            "✉️ <b>Напишите сообщение для тех. поддержки</b>\n\n"
+            "Можно отправить текст или фото с подписью следующим сообщением. Если проблема типовая, бот сначала подскажет решение автоматически."
+        )
     await smart_edit_message(
         callback.message,
-        "✉️ <b>Напишите сообщение для тех. поддержки</b>\n\nМожно отправить текст или фото с подписью следующим сообщением. Если проблема типовая, бот сначала подскажет решение автоматически.",
+        text,
         parse_mode="HTML",
     )
     await callback.answer()

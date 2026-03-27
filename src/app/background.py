@@ -416,15 +416,14 @@ async def remind_unpaid_referrals(ctx: BackgroundContext) -> None:
         try:
             await asyncio.sleep(3600)
             users = await ctx.db.get_all_users()
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
             for user in users:
                 if user.get("ref_by") and not user.get("ref_rewarded") and not user.get("has_subscription"):
                     joined = user.get("join_date")
                     if joined:
-                        try:
-                            join_dt = datetime.fromisoformat(str(joined))
-                        except (TypeError, ValueError) as exc:
-                            logger.debug("Referral reminder skipped: invalid join_date for %s: %s", user.get("user_id"), exc)
+                        join_dt = _parse_sqlite_ts(joined)
+                        if not join_dt:
+                            logger.debug("Referral reminder skipped: invalid join_date for %s: %r", user.get("user_id"), joined)
                             continue
                         diff = (now - join_dt).total_seconds()
                         if 86400 <= diff <= 90000:

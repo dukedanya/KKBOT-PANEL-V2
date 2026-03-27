@@ -10,6 +10,8 @@ async def smart_edit_message(message, text: str, reply_markup=None, **kwargs):
         return await message.answer(text, reply_markup=reply_markup, **kwargs)
     except TelegramBadRequest as e:
         err = str(e).lower()
+        if 'media_caption_too_long' in err or 'caption is too long' in err:
+            return await message.answer(text, reply_markup=reply_markup, **kwargs)
         if 'there is no text in the message to edit' in err:
             try:
                 return await message.edit_caption(caption=text, reply_markup=reply_markup, **kwargs)
@@ -27,6 +29,8 @@ async def smart_edit_by_bot(bot, chat_id: int, message_id: int, text: str, reply
         return await bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=reply_markup, **kwargs)
     except TelegramBadRequest as e:
         err = str(e).lower()
+        if 'media_caption_too_long' in err or 'caption is too long' in err:
+            return await bot.send_message(chat_id, text, reply_markup=reply_markup, **kwargs)
         if 'there is no text in the message to edit' in err:
             try:
                 return await bot.edit_message_caption(chat_id=chat_id, message_id=message_id, caption=text, reply_markup=reply_markup, **kwargs)
