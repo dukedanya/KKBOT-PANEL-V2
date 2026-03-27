@@ -13,7 +13,7 @@ from kkbot.services.subscriptions import (
 )
 from services.antifraud import evaluate_referral_link
 from services.panel import PanelAPI
-from tariffs import format_duration, format_traffic, get_by_id
+from tariffs import format_duration, get_by_id
 from utils.helpers import notify_admins, notify_user
 from utils.onboarding import onboarding_keyboard, onboarding_text
 from utils.subscription_links import render_connection_info
@@ -316,7 +316,6 @@ async def process_successful_payment(
                 "payment_success_user",
                 plan_name=plan.get("name", plan_id),
                 ip_limit=plan.get("ip_limit", 0),
-                traffic=format_traffic(plan.get("traffic_gb", 0)),
                 duration=format_duration(int(plan.get("duration_days", 30)) + bonus_days_for_user),
                 vpn_url=vpn_url,
                 connection_info=connection_info,

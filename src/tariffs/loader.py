@@ -57,20 +57,11 @@ def get_minimal_by_price() -> Optional[Dict[str, Any]]:
     eligible = [p for p in TARIFFS_ACTIVE if not is_trial_plan(p)]
     if not eligible:
         return None
-    return min(eligible, key=lambda p: (p.get("price_rub", 0), p.get("traffic_gb", 0), p.get("ip_limit", 0)))
+    return min(eligible, key=lambda p: (p.get("price_rub", 0), p.get("ip_limit", 0)))
 
 
 def format_traffic(traffic_gb: Any) -> str:
-    try:
-        value = float(traffic_gb)
-    except (TypeError, ValueError):
-        return str(traffic_gb)
-
-    if value >= 1024 and value % 1024 == 0:
-        return f"{int(value / 1024)} ТБ"
-    if value.is_integer():
-        return f"{int(value)} ГБ"
-    return f"{value} ГБ"
+    return "Безлимит"
 
 
 def format_duration(days: int) -> str:
@@ -110,22 +101,36 @@ def has_stars_provider_enabled() -> bool:
     return "telegram_stars" in get_enabled_payment_providers()
 
 
+def _format_plan_description(plan: Dict[str, Any]) -> str:
+    description = str(plan.get("description") or "").strip()
+    if not description:
+        return ""
+    return f"<blockquote>{description}</blockquote>"
+
+
+def _format_plan_quote(plan: Dict[str, Any], *, include_duration: bool = True) -> str:
+    parts = [
+        f"💰 {format_price(plan)}",
+        f"📱 до {plan.get('ip_limit', 0)} устройств",
+        "∞ Безлимитный трафик",
+    ]
+    if include_duration:
+        parts.append(f"⏱ {format_duration(int(plan.get('duration_days', 30) or 30))}")
+    description = str(plan.get("description") or "").strip()
+    if description:
+        parts.append(description)
+    return "<blockquote>" + "\n".join(parts) + "</blockquote>"
+
+
 def build_tariffs_text(plans: Optional[List[Dict[str, Any]]] = None) -> str:
     plans = plans if plans is not None else get_all_active()
     if not plans:
         return "🔒 <b>Тарифы VPN</b>\n\nТарифы временно недоступны."
 
-    show_stars = has_stars_provider_enabled()
     lines = ["🔒 <b>Тарифы VPN</b>", ""]
     for idx, plan in enumerate(plans, 1):
         lines.append(f"{idx}. <b>{plan.get('name', plan.get('id'))}</b>")
-        lines.append(f"   💰 {format_price(plan)}")
-        if show_stars and plan.get("price_rub", 0) > 0:
-            lines.append(f"   ⭐ {format_stars_price(plan)}")
-        lines.append(f"   📱 до {plan.get('ip_limit', 0)} устройств")
-        lines.append(f"   📦 {format_traffic(plan.get('traffic_gb', 0))}")
-        if plan.get("description"):
-            lines.append(f"   ℹ️ {plan.get('description')}")
+        lines.append(f"   {_format_plan_quote(plan, include_duration=True)}")
         lines.append("")
     return "\n".join(lines).strip()
 
@@ -135,15 +140,9 @@ def build_buy_text(plans: Optional[List[Dict[str, Any]]] = None) -> str:
     if not plans:
         return "💳 <b>Купить подписку VPN</b>\n\nТарифы временно недоступны."
 
-    show_stars = has_stars_provider_enabled()
     lines = ["💳 <b>Выберите тариф</b>", ""]
     for idx, plan in enumerate(plans, 1):
         lines.append(f"{idx}. <b>{plan.get('name', plan.get('id'))}</b>")
-        lines.append(f"   💰 {format_price(plan)}")
-        if show_stars and plan.get("price_rub", 0) > 0:
-            lines.append(f"   ⭐ {format_stars_price(plan)}")
-        lines.append(f"   📱 до {plan.get('ip_limit', 0)} устройств")
-        lines.append(f"   📦 {format_traffic(plan.get('traffic_gb', 0))}")
-        lines.append(f"   ⏱ {format_duration(int(plan.get('duration_days', 30) or 30))}")
+        lines.append(f"   {_format_plan_quote(plan, include_duration=True)}")
         lines.append("")
     return "\n".join(lines).strip()

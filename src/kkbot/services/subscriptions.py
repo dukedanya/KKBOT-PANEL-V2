@@ -26,15 +26,21 @@ class SubscriptionService:
         panel_sub_id: str,
         panel_client_uuid: str = "",
         created_inbounds: list[int] | None = None,
-        expires_at: str | None = None,
+        expires_at: datetime | str | None = None,
         ip_limit: int = 0,
         status: str = "active",
     ) -> int:
+        normalized_expires_at = expires_at
+        if isinstance(normalized_expires_at, str) and normalized_expires_at.strip():
+            try:
+                normalized_expires_at = datetime.fromisoformat(normalized_expires_at.replace("Z", "+00:00"))
+            except ValueError:
+                normalized_expires_at = None
         return await self.repo.replace_active_with_new(
             user_id=user_id,
             plan_code=plan_code,
             traffic_limit_bytes=max(0, int(traffic_limit_gb)) * 1024 * 1024 * 1024,
-            expires_at=expires_at,
+            expires_at=normalized_expires_at,
             status=status,
             meta={
                 "vpn_url": vpn_url,
@@ -137,16 +143,13 @@ async def get_subscription_status(user_id: int, db, panel) -> dict[str, Any]:
         plan_text = str(record.get("plan_code") or legacy_user.get("plan_text") or "")
         vpn_url = str(meta.get("vpn_url") or legacy_user.get("vpn_url") or "")
         ip_limit = int(meta.get("ip_limit") or legacy_user.get("ip_limit") or 0)
-        traffic_gb = float(record.get("traffic_limit_bytes") or 0) / (1024 * 1024 * 1024)
-        if traffic_gb <= 0:
-            traffic_gb = float(legacy_user.get("traffic_gb") or 0)
         return {
             "active": bool(current.get("active")),
             "user": {
                 "plan_text": plan_text,
                 "vpn_url": vpn_url,
                 "ip_limit": ip_limit,
-                "traffic_gb": traffic_gb,
+                "traffic_gb": 0,
             },
             "is_frozen": False,
             "frozen_until": None,
@@ -188,7 +191,7 @@ async def create_subscription(
         client = await panel.upsert_client(
             email=base_email,
             limit_ip=int(plan.get("ip_limit", 0) or 0),
-            total_gb=int(plan.get("traffic_gb", 0) or 0),
+            total_gb=0,
             days=days,
             sub_id=stable_sub_id,
         )
@@ -210,7 +213,7 @@ async def create_subscription(
         await service.create_panel_subscription(
             user_id=user_id,
             plan_code=plan_name,
-            traffic_limit_gb=int(plan.get("traffic_gb", 0) or 0),
+            traffic_limit_gb=0,
             vpn_url=vpn_url,
             panel_email=base_email,
             panel_sub_id=str(client.get("subId") or stable_sub_id),

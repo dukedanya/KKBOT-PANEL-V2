@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import Any
 
 from kkbot.db.postgres import PostgresDatabase
@@ -17,7 +18,7 @@ class SubscriptionRepository:
         plan_code: str,
         traffic_limit_bytes: int,
         traffic_used_bytes: int = 0,
-        expires_at: str | None = None,
+        expires_at: datetime | None = None,
         status: str = "active",
         meta: dict[str, Any] | None = None,
     ) -> int:
@@ -37,7 +38,7 @@ class SubscriptionRepository:
                     INSERT INTO subscriptions(
                         user_id, status, plan_code, traffic_limit_bytes, traffic_used_bytes, expires_at, meta
                     )
-                    VALUES($1, $2, $3, $4, $5, $6::timestamptz, $7::jsonb)
+                    VALUES($1, $2, $3, $4, $5, $6, $7::jsonb)
                     RETURNING id
                     """,
                     user_id,

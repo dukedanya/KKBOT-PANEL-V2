@@ -8,12 +8,11 @@ from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKe
 
 from config import Config
 from db import Database
-from tariffs import get_by_id, format_traffic, format_duration, format_price
+from tariffs import get_by_id, format_duration, format_price
 from keyboards import subscriptions_inline_keyboard, profile_inline_keyboard
 from utils.helpers import replace_message, get_visible_plans
 from kkbot.services.subscriptions import create_subscription, is_active_subscription, get_subscription_status, panel_base_email
 from services.panel import PanelAPI
-from services.traffic_state import format_grace_until, get_total_traffic_snapshot_for_user
 from utils.subscription_links import render_connection_info
 from utils.onboarding import onboarding_keyboard, onboarding_text
 from utils.telegram_ui import smart_edit_message
@@ -52,54 +51,20 @@ async def render_profile_text(user_id: int, *, status: dict, panel: PanelAPI, db
         base_email = await panel_base_email(user_id, db)
         client_stats = await panel.get_client_stats(base_email)
         full_clients = await panel.find_clients_full_by_email(base_email)
-        total_snapshot = await get_total_traffic_snapshot_for_user(user_id, db)
         ip_limit = int(user_data.get("ip_limit") or legacy_user.get("ip_limit") or 0)
         vpn_url = user_data.get("vpn_url") or legacy_user.get("vpn_url") or ""
-        traffic_gb = float(user_data.get("traffic_gb") or legacy_user.get("traffic_gb") or 0)
         connection_info = render_connection_info(vpn_url, user_id=user_id, include_sidr=False)
         expiry_dt = status.get("expiry_dt")
         expiry_date = expiry_dt.strftime("%d.%m.%Y %H:%M") if expiry_dt else "не указана"
 
-        if total_snapshot and total_snapshot.fresh:
-            mode = total_snapshot.mode
-            if mode == "grace":
-                mode_label = "🐢 Grace-режим"
-            elif mode == "disabled":
-                mode_label = "⛔ Доступ отключён"
-            else:
-                mode_label = "🟢 Обычный режим"
-
-            sub_lines = [
-                "",
-                "📦 <b>Текущая подписка</b>",
-                f"Режим доступа: <b>{mode_label}</b>",
-                f"IP-адреса: <b>до {ip_limit}</b>",
-                f"Срок действия: <b>до {expiry_date}</b>",
-                f"📡 Актуальный трафик: <b>{total_snapshot.total_gb:.2f} / {total_snapshot.quota_gb:.2f} ГБ</b>",
-            ]
-            if total_snapshot.mode == "grace" and total_snapshot.grace_until:
-                sub_lines.append(f"Grace до: <b>{format_grace_until(total_snapshot.grace_until)}</b>")
-            sub_lines.extend(
-                [
-                    "",
-                    "🔗 <b>Ссылка на подключение</b>",
-                    "",
-                    connection_info,
-                    "",
-                    f"💰 Баланс: <b>{balance:.2f} ₽</b>",
-                ]
-            )
-        elif client_stats or full_clients:
-            used_bytes = 0
-            for client in client_stats:
-                used_bytes += client.get("up", 0) + client.get("down", 0)
-            used_gb = used_bytes / 1073741824
+        if client_stats or full_clients:
             sub_lines = [
                 "",
                 "📦 <b>Текущая подписка</b>",
                 f"IP-адреса: <b>до {ip_limit}</b>",
                 f"Срок действия: <b>до {expiry_date}</b>",
-                f"📡 Актуальный трафик: <b>{used_gb:.2f} / {traffic_gb:.2f} ГБ</b>",
+                "",
+                "🔗 <b>Ссылка для подключения:</b>",
                 "",
                 connection_info,
                 "",
@@ -110,6 +75,8 @@ async def render_profile_text(user_id: int, *, status: dict, panel: PanelAPI, db
                 "",
                 "📦 <b>Текущая подписка</b>",
                 f"IP-адреса: <b>до {ip_limit}</b>",
+                "",
+                "🔗 <b>Ссылка для подключения:</b>",
                 "",
                 connection_info,
                 "",
@@ -218,7 +185,6 @@ async def subscriptions_menu(message: Message, db: Database, panel: PanelAPI):
                 "🎁 <b>Пробный период!</b>\n\n"
                 "Новым пользователям доступен пробный тариф:\n"
                 f"✅ <b>{trial_plan.get('name', 'Пробный')}</b>\n"
-                f"📦 Трафик: {format_traffic(trial_plan.get('traffic_gb', 10))}\n"
                 f"📱 Устройств: до {trial_plan.get('ip_limit', 1)}\n"
                 f"⏱ Срок: {format_duration(trial_plan.get('duration_days', 3))}\n\n"
                 "Хотите попробовать?"
@@ -246,7 +212,6 @@ async def subscriptions_menu_callback(callback: CallbackQuery, db: Database, pan
             text = (
                 "🎁 <b>Пробный период!</b>\n\n"
                 f"✅ <b>{trial_plan.get('name', 'Пробный')}</b>\n"
-                f"📦 Трафик: {format_traffic(trial_plan.get('traffic_gb', 10))}\n"
                 f"📱 Устройств: до {trial_plan.get('ip_limit', 1)}\n"
                 f"⏱ Срок: {format_duration(trial_plan.get('duration_days', 3))}\n\n"
                 "Хотите попробовать?"
@@ -312,7 +277,6 @@ async def build_subscriptions_text(user_id: int, *, status: dict, db: Database) 
     if active:
         plan_text = user_data.get("plan_text", "Неизвестно")
         ip_limit = user_data.get("ip_limit", 0)
-        traffic_gb = user_data.get("traffic_gb", 0)
         expiry_dt = status.get("expiry_dt")
         expiry_str = expiry_dt.strftime("%d.%m.%Y %H:%M") if expiry_dt else "неизвестно"
         lines.extend([
@@ -320,7 +284,6 @@ async def build_subscriptions_text(user_id: int, *, status: dict, db: Database) 
             "",
             f"Тариф: <b>{plan_text}</b>",
             f"Устройств: до {ip_limit}",
-            f"Трафик: {format_traffic(traffic_gb)}",
             f"Статус: {'❄️ Заморожена' if status.get('is_frozen') else '✅ Активна'}",
         ])
         if status.get("is_frozen") and status.get("frozen_until"):
@@ -351,10 +314,16 @@ async def build_subscriptions_text(user_id: int, *, status: dict, db: Database) 
         badge = "🔥 Хит" if idx == 1 else "🎯 Выгодно" if idx == 2 else "✨"
         lines.append("")
         lines.append(f"{idx}. {badge} <b>{plan.get('name')}</b>")
-        lines.append(f"   💰 {format_price(plan)}")
-        lines.append(f"   📱 до {plan.get('ip_limit')} устройств")
-        lines.append(f"   📦 {format_traffic(plan.get('traffic_gb'))}")
-        lines.append(f"   ⏱ {format_duration(int(plan.get('duration_days', 30)))}")
+        description = str(plan.get("description") or "").strip()
+        quote_parts = [
+            f"💰 {format_price(plan)}",
+            f"📱 до {plan.get('ip_limit')} устройств",
+            "∞ Безлимитный трафик",
+            f"⏱ {format_duration(int(plan.get('duration_days', 30)))}",
+        ]
+        if description:
+            quote_parts.append(description)
+        lines.append("   <blockquote>" + "\n".join(quote_parts) + "</blockquote>")
     return "\n".join(lines)
 
 

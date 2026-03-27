@@ -13,7 +13,7 @@ TEMPLATES: Dict[str, Dict[str, object]] = {
     "support_sent_admin": {"title": "Поддержка: ответ отправлен", "text": "✅ Ответ отправлен пользователю.", "allow_photo": False},
     "support_reply_title": {"title": "Поддержка: заголовок ответа", "text": "🛠 <b>Ответ от Тех. Поддержки</b>", "allow_photo": False},
     "support_closed_by_admin_user": {"title": "Поддержка: вопрос закрыт", "text": "✅ <b>Ваш вопрос закрыт тех. поддержкой.</b>", "allow_photo": False},
-    "payment_success_user": {"title": "Оплата: успешная", "text": "✅ <b>Платёж подтверждён!</b>\n\n📦 Тариф: <b>{plan_name}</b>\n📱 Устройств: <b>до {ip_limit}</b>\n📊 Трафик: <b>{traffic}</b>\n⏳ Срок: <b>{duration}</b>\n{connection_info}\n\nСпасибо за покупку! 🎉", "allow_photo": False},
+    "payment_success_user": {"title": "Оплата: успешная", "text": "✅ <b>Платёж подтверждён!</b>\n\n📦 Тариф: <b>{plan_name}</b>\n📱 Устройств: <b>до {ip_limit}</b>\n⏳ Срок: <b>{duration}</b>\n{connection_info}\n\nСпасибо за покупку! 🎉", "allow_photo": False},
     "payment_rejected_user": {"title": "Оплата: отклонена", "text": "❌ <b>Платёж не был завершён.</b>\n\nЕсли деньги всё же списались, напишите в поддержку — мы проверим вручную.", "allow_photo": False},
     "referral_bonus_user": {"title": "Реферальный бонус: пользователю", "text": "🎁 Вам начислено <b>+{bonus_days} дней</b> бесплатно по реферальной программе!", "allow_photo": False},
     "withdraw_request_created_user": {"title": "Вывод: запрос создан", "text": "✅ Запрос на вывод <b>{amount:.2f} ₽</b> отправлен администратору. Ожидайте подтверждения.", "allow_photo": False},

@@ -18,7 +18,7 @@ from services.yookassa import YooKassaAPI
 from kkbot.services.subscriptions import revoke_subscription
 from services.payment_attention_resolver import auto_resolve_payment_attention
 from services.health import collect_health_snapshot
-from services.traffic_state import format_grace_until, get_total_traffic_snapshot_for_user
+from services.traffic_state import format_grace_until
 from tariffs import get_all_active, get_by_id
 from utils.helpers import replace_message, notify_admins, notify_user
 from utils.payments import get_provider_payment_id
@@ -191,39 +191,6 @@ def _format_access_mode_label(mode: str) -> str:
     if normalized == "normal":
         return "🟢 Normal"
     return normalized or "неизвестно"
-
-
-def _format_total_traffic_block(snapshot: Optional[Any]) -> str:
-    if not snapshot:
-        return (
-            "<b>Общий traffic-state</b>\n"
-            "📡 Статус: <b>нет данных</b>\n"
-            "🧮 Общий трафик: <b>—</b>\n"
-            "📦 Квота: <b>—</b>\n"
-            "📉 Остаток: <b>—</b>\n"
-            "🚦 Режим: <b>—</b>\n"
-            "⏳ Grace до: <code>-</code>"
-        )
-
-    freshness = "свежий" if getattr(snapshot, "fresh", False) else "устарел"
-    if getattr(snapshot, "quota_bytes", 0) > 0:
-        quota_line = f"<b>{snapshot.quota_gb:.1f} ГБ</b>"
-        remaining_line = f"<b>{snapshot.remaining_gb:.1f} ГБ</b>"
-    else:
-        quota_line = "<b>не задана</b>"
-        remaining_line = "<b>—</b>"
-
-    return (
-        "<b>Общий traffic-state</b>\n"
-        f"📡 Статус: <b>{freshness}</b>\n"
-        f"🧮 Общий трафик: <b>{snapshot.total_gb:.1f} ГБ</b>\n"
-        f"📦 Квота: {quota_line}\n"
-        f"📉 Остаток: {remaining_line}\n"
-        f"🚦 Режим: <b>{_format_access_mode_label(getattr(snapshot, 'mode', ''))}</b>\n"
-        f"⚠️ Over limit: <b>{_format_bool_badge(getattr(snapshot, 'over_limit', False))}</b>\n"
-        f"⌛ Expired: <b>{_format_bool_badge(getattr(snapshot, 'expired', False))}</b>\n"
-        f"⏳ Grace до: <code>{format_grace_until(getattr(snapshot, 'grace_until', '')) or '-'}</code>"
-    )
 
 
 def _format_user_timeline(items: List[Dict[str, Any]]) -> str:
@@ -789,7 +756,6 @@ async def _build_user_card_text(db: Database, user_id: int, *, display_name_over
     payments = payload.get("payments") or []
     withdraws = payload.get("withdraws") or []
     adjustments = payload.get("adjustments") or []
-    total_snapshot = await get_total_traffic_snapshot_for_user(user_id, db)
     support_text = "\n".join(
         f"• <code>#{item.get('id')}</code> — <b>{format_support_status(str(item.get('status') or ''), lowercase=True)}</b> — {item.get('updated_at') or '-'}"
         for item in support_tickets[:4]
@@ -858,7 +824,6 @@ async def _build_user_card_text(db: Database, user_id: int, *, display_name_over
         f"💰 Заработано: <b>{float(referral.get('earned_rub', 0.0) or 0.0):.2f} ₽</b>\n"
         f"🏷 Статус партнёра: <b>{partner.get('status') or 'standard'}</b>\n"
         f"📝 Заметка: <code>{_trim_text(str(partner.get('note') or '-'), 60)}</code>\n\n"
-        f"{_format_total_traffic_block(total_snapshot)}\n\n"
         f"<b>Поддержка</b>\n{support_text}\n\n"
         f"<b>Платежи</b>\n{payments_text}\n\n"
         f"<b>Выводы</b>\n{withdraws_text}\n\n"
@@ -2721,11 +2686,18 @@ async def admin_dash_period(callback: CallbackQuery, db: Database):
         end_days_ago = max(0, int(end_days_str))
     except Exception:
         days, end_days_ago = 7, 0
-    await smart_edit_message(callback.message, 
-        await _build_period_report_detail(db, days=days, end_days_ago=end_days_ago),
-        reply_markup=_period_report_keyboard(days, end_days_ago),
-        parse_mode="HTML",
-    )
+    text = await _build_period_report_detail(db, days=days, end_days_ago=end_days_ago)
+    markup = _period_report_keyboard(days, end_days_ago)
+    try:
+        await smart_edit_message(
+            callback.message,
+            text,
+            reply_markup=markup,
+            parse_mode="HTML",
+        )
+    except Exception as exc:
+        logger.warning("Period report render fallback: admin=%s days=%s end_days_ago=%s error=%s", callback.from_user.id, days, end_days_ago, exc)
+        await callback.message.answer(text, reply_markup=markup, parse_mode="HTML")
     await callback.answer()
 
 

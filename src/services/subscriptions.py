@@ -141,7 +141,7 @@ async def create_subscription(
         client = await panel.upsert_client(
             email=base_email,
             limit_ip=int(plan.get("ip_limit", 0) or 0),
-            total_gb=int(plan.get("traffic_gb", 0) or 0),
+            total_gb=0,
             days=days,
             sub_id=stable_sub_id,
         )
@@ -149,7 +149,7 @@ async def create_subscription(
         client = await panel.create_client(
             email=base_email,
             limit_ip=int(plan.get("ip_limit", 0) or 0),
-            total_gb=int(plan.get("traffic_gb", 0) or 0),
+            total_gb=0,
             days=days,
             sub_id=stable_sub_id,
         )
@@ -170,7 +170,7 @@ async def create_subscription(
         user_id=user_id,
         plan_text=plan_name,
         ip_limit=int(plan.get("ip_limit", 0) or 0),
-        traffic_gb=int(plan.get("traffic_gb", 0) or 0),
+        traffic_gb=0,
         vpn_url=vpn_url,
     )
     if not updated:

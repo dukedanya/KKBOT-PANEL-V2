@@ -29,6 +29,98 @@ class OperationsRepository:
     def __init__(self, db: PostgresDatabase):
         self.db = db
 
+    async def create_withdraw_request(self, *, user_id: int, amount: float, payload: dict[str, Any]) -> int:
+        meta_json = json.dumps({"legacy_payload": payload}, ensure_ascii=False, default=str)
+        async with self.db.pool.acquire() as conn:  # type: ignore[union-attr]
+            row = await conn.fetchrow(
+                """
+                INSERT INTO withdraw_requests(user_id, amount, status, created_at, meta)
+                VALUES($1, $2, 'pending', NOW(), $3::jsonb)
+                RETURNING id
+                """,
+                user_id,
+                float(amount or 0),
+                meta_json,
+            )
+        return int(row["id"])
+
+    async def update_withdraw_request_status(self, request_id: int, *, status: str, processed_at: datetime | None = None, payload: dict[str, Any] | None = None) -> bool:
+        meta_json = json.dumps({"legacy_payload": payload or {}}, ensure_ascii=False, default=str)
+        async with self.db.pool.acquire() as conn:  # type: ignore[union-attr]
+            result = await conn.execute(
+                """
+                UPDATE withdraw_requests
+                SET status = $2,
+                    processed_at = COALESCE($3::timestamptz, processed_at, NOW()),
+                    meta = CASE WHEN $4::jsonb = '{}'::jsonb THEN meta ELSE $4::jsonb END
+                WHERE id = $1
+                """,
+                request_id,
+                status,
+                processed_at,
+                meta_json,
+            )
+        return int(result.split()[-1]) > 0
+
+    async def create_support_ticket(self, *, user_id: int, payload: dict[str, Any]) -> int:
+        meta_json = json.dumps({"legacy_payload": payload}, ensure_ascii=False, default=str)
+        async with self.db.pool.acquire() as conn:  # type: ignore[union-attr]
+            row = await conn.fetchrow(
+                """
+                INSERT INTO support_tickets(user_id, status, created_at, updated_at, meta)
+                VALUES($1, 'open', NOW(), NOW(), $2::jsonb)
+                RETURNING id
+                """,
+                user_id,
+                meta_json,
+            )
+        return int(row["id"])
+
+    async def update_support_ticket_status(
+        self,
+        ticket_id: int,
+        *,
+        status: str,
+        assigned_admin_id: int | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> bool:
+        meta_json = json.dumps({"legacy_payload": payload or {}}, ensure_ascii=False, default=str)
+        async with self.db.pool.acquire() as conn:  # type: ignore[union-attr]
+            result = await conn.execute(
+                """
+                UPDATE support_tickets
+                SET status = $2,
+                    assigned_admin_id = COALESCE($3, assigned_admin_id),
+                    updated_at = NOW(),
+                    meta = CASE WHEN $4::jsonb = '{}'::jsonb THEN meta ELSE $4::jsonb END
+                WHERE id = $1
+                """,
+                ticket_id,
+                status,
+                assigned_admin_id,
+                meta_json,
+            )
+        return int(result.split()[-1]) > 0
+
+    async def create_support_message(self, payload: dict[str, Any]) -> int:
+        meta_json = json.dumps({"legacy_payload": payload}, ensure_ascii=False, default=str)
+        async with self.db.pool.acquire() as conn:  # type: ignore[union-attr]
+            row = await conn.fetchrow(
+                """
+                INSERT INTO support_messages(ticket_id, sender_role, sender_user_id, text, media_type, media_file_id, created_at, meta)
+                VALUES($1, $2, $3, $4, $5, $6, NOW(), $7::jsonb)
+                RETURNING id
+                """,
+                int(payload.get("ticket_id") or 0),
+                str(payload.get("sender_role") or ""),
+                int(payload.get("sender_user_id") or 0),
+                str(payload.get("text") or ""),
+                str(payload.get("media_type") or ""),
+                str(payload.get("media_file_id") or ""),
+                meta_json,
+            )
+        return int(row["id"])
+
     async def insert_antifraud_event(
         self,
         *,

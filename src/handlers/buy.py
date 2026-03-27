@@ -16,7 +16,7 @@ from aiogram.types import (
 
 from config import Config
 from tariffs import (
-    get_by_id, is_trial_plan, format_traffic, format_duration,
+    get_by_id, is_trial_plan, format_duration,
     build_buy_text,
 )
 from keyboards import back_keyboard
@@ -1089,7 +1089,7 @@ async def _buy_plan_with_provider_locked(callback: CallbackQuery, db, payment_ga
                 f"💰 Сумма: <b>{price_line}</b>\n\n"
                 "Нажмите кнопку ниже для перехода к оплате.\n"
                 "После оплаты подписка активируется <b>автоматически</b>.\n"
-                "Обычно это занимает <b>до 1 минуты</b>, вручную ничего проверять не нужно."
+                "Обычно это занимает <b>до 1 минуты</b>, но вы можете проверить платеж вручную."
             )
             text += f"{gift_line}{promo_line}"
             inline = []
@@ -1141,7 +1141,7 @@ async def check_payment_status(callback: CallbackQuery, db, payment_gateway, pan
             await callback.answer("❌ Платёж уже отклонён", show_alert=True)
             return
         if status == "processing":
-            await callback.answer("⏳ Платёж сейчас обрабатывается", show_alert=True)
+            await callback.answer("⏳ Платёж сейчас обрабатывается. Мы продолжаем автоматическую проверку, обычно это занимает до 1 минуты.", show_alert=True)
             return
 
         if getattr(payment_gateway, "provider_name", Config.PAYMENT_PROVIDER) == "telegram_stars":

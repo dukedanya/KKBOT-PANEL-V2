@@ -1,6 +1,6 @@
 import asyncio
 
-from kkbot.bootstrap import run
+from app.bootstrap import run
 
 
 def main() -> None:

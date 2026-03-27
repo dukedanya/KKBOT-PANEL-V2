@@ -7,7 +7,7 @@
 - Telegram bot runtime
 - business workflows
 - startup orchestration
-- legacy SQLite import
+- SQLite -> PostgreSQL import
 - panel HTTP integrations
 
 ### Go
@@ -20,21 +20,17 @@
 
 ### Phase 1
 
-- old SQLite is preserved as legacy source
+- old SQLite is preserved as import source
 - first boot imports it into PostgreSQL
-- all new runtime work goes only through PostgreSQL
+- all runtime work goes only through PostgreSQL
 
 ### Phase 2
 
-- legacy SQLite stops being used operationally
-- legacy file remains only as backup / rollback artifact
-
-### Phase 3
-
-- legacy import path can be removed once production is stable
+- SQLite is no longer used by runtime
+- SQLite file remains only as backup / rollback artifact
 
 ## Why this split
 
 - no risky big-bang rewrite of data at runtime
-- bot gets a clean PostgreSQL-first core immediately
+- bot gets a clean PostgreSQL-only runtime
 - migration stays reversible because original SQLite is untouched

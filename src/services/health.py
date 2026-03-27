@@ -9,7 +9,7 @@ from aiogram import Bot
 from config import Config
 from db import Database
 from services.panel import PanelAPI
-from services.traffic_state import check_lte_report_api_health, load_total_traffic_state
+from services.traffic_state import check_lte_report_api_health
 from utils.helpers import notify_admins
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,6 @@ async def collect_health_snapshot(db: Database, panel: PanelAPI, payment_gateway
         "database": False,
         "panel": False,
         "lte_api": False,
-        "traffic_state": False,
         "payment_provider": False,
         "schema_version": 0,
         "processing_count": 0,
@@ -65,14 +64,6 @@ async def collect_health_snapshot(db: Database, panel: PanelAPI, payment_gateway
         logger.error("collect_health_snapshot lte_api failed: %s", exc)
 
     try:
-        state, source, fresh = await load_total_traffic_state()
-        snapshot["traffic_state"] = bool(state and fresh)
-        if source:
-            snapshot["traffic_state_source"] = source
-    except Exception as exc:
-        logger.error("collect_health_snapshot traffic_state failed: %s", exc)
-
-    try:
         session = await payment_gateway._get_session()  # noqa: SLF001
         snapshot["payment_provider"] = bool(session and not session.closed)
     except Exception as exc:
@@ -82,7 +73,6 @@ async def collect_health_snapshot(db: Database, panel: PanelAPI, payment_gateway
         snapshot["database"]
         and snapshot["panel"]
         and snapshot["lte_api"]
-        and snapshot["traffic_state"]
         and snapshot["payment_provider"]
         and snapshot["processing_count"] <= Config.HEALTH_MAX_PROCESSING
     )
@@ -93,7 +83,6 @@ async def format_health_text(snapshot: Dict[str, Any]) -> str:
     db_status = "OK" if snapshot.get("database") else "FAIL"
     panel_status = "OK" if snapshot.get("panel") else "FAIL"
     lte_api_status = "OK" if snapshot.get("lte_api") else "FAIL"
-    traffic_state_status = "OK" if snapshot.get("traffic_state") else "FAIL"
     provider_name = getattr(Config, "PAYMENT_PROVIDER", "payment").upper()
     itpay_status = "OK" if snapshot.get("payment_provider") else "FAIL"
     problems = []
@@ -110,7 +99,6 @@ async def format_health_text(snapshot: Dict[str, Any]) -> str:
         f"БД: <b>{db_status}</b>\n"
         f"Panel: <b>{panel_status}</b>\n"
         f"LTE API: <b>{lte_api_status}</b>\n"
-        f"Traffic state: <b>{traffic_state_status}</b>\n"
         f"{provider_name}: <b>{itpay_status}</b>\n"
         f"Schema version: <code>{snapshot.get('schema_version', 0)}</code>\n"
         f"Processing payments: <b>{snapshot.get('processing_count', 0)}</b>\n"
@@ -133,8 +121,6 @@ async def emit_health_alerts(
         alert_specs.append(("panel_down", "⚠️ ALERT\n\nPanel недоступна"))
     if not snapshot.get("lte_api"):
         alert_specs.append(("lte_api_down", "⚠️ ALERT\n\nLTE report API недоступен"))
-    if not snapshot.get("traffic_state"):
-        alert_specs.append(("traffic_state_stale", "⚠️ ALERT\n\nОбщий traffic-state отсутствует или устарел"))
     if not snapshot.get("payment_provider"):
         provider_name = getattr(Config, "PAYMENT_PROVIDER", "payment").upper()
         alert_specs.append(("payment_provider_down", f"⚠️ ALERT\n\n{provider_name} session/API недоступна"))

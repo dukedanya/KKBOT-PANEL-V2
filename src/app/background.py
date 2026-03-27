@@ -165,7 +165,7 @@ async def reconcile_provider_payments(ctx: BackgroundContext) -> None:
                         payment=payment,
                         db=ctx.db,
                         panel=ctx.panel,
-                        bot=None,
+                        bot=ctx.bot,
                         admin_context=f"{provider_name.upper()} reconcile status={remote_status}",
                     )
                     if not result.get("ok") and result.get("reason") != "already_processing":
@@ -179,7 +179,7 @@ async def reconcile_provider_payments(ctx: BackgroundContext) -> None:
                     result = await reject_pending_payment(
                         payment=payment,
                         db=ctx.db,
-                        bot=None,
+                        bot=ctx.bot,
                         reason_text=(
                             "❌ <b>Платёж не был завершён.</b>\n\n"
                             "Если деньги всё же списались, напишите в поддержку — мы проверим вручную."

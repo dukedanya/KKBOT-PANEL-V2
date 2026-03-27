@@ -116,7 +116,7 @@ async def build_referral_screen(user_id: int, *, db: Database, panel: PanelAPI, 
     paid_refs = int(summary.get("paid_refs", 0) or 0)
     conversion = float(summary.get("conversion_pct", 0.0) or 0.0)
 
-    source_label = "индивидуальные условия" if has_custom_rates else "стандартные условия (.env)"
+    source_label = "индивидуальные условия" if has_custom_rates else "стандартные условия"
     text = (
         "🤝 <b>Реферальная система VPN</b>\n\n"
         "У нас <b>3-уровневая реферальная система</b>:\n"
@@ -165,7 +165,7 @@ async def _show_ref_link(user_id: int, *, db: Database, bot: Bot, user_msg: Opti
         link = get_ref_link(ref_code, 2, bot_username=getattr(bot, "username", ""))
         summary = await db.get_referral_partner_cabinet(user_id) if hasattr(db, "get_referral_partner_cabinet") else await db.get_referral_summary(user_id)
         rate_l1, rate_l2, rate_l3, has_custom_rates = _resolve_referral_rates(summary)
-        source_label = "индивидуальные условия" if has_custom_rates else "стандартные условия (.env)"
+        source_label = "индивидуальные условия" if has_custom_rates else "стандартные условия"
         bonus_text = (
             "У нас 3-уровневая реферальная система:\n"
             f"• 1 уровень: <b>{_format_percent(rate_l1)}%</b>\n"

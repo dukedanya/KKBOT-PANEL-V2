@@ -30,6 +30,40 @@ class PaymentRepository:
     def __init__(self, db: PostgresDatabase):
         self.db = db
 
+    async def create_intent(self, payload: dict[str, Any]) -> bool:
+        async with self.db.pool.acquire() as conn:  # type: ignore[union-attr]
+            result = await conn.execute(
+                """
+                INSERT INTO payment_intents(
+                    payment_id, user_id, plan_id, amount, status, provider, provider_payment_id, msg_id,
+                    recipient_user_id, promo_code, promo_discount_percent, gift_label, last_error,
+                    activation_attempts, created_at, processed_at, processing_started_at, next_retry_at, updated_at, meta
+                )
+                VALUES(
+                    $1, $2, $3, $4, $5, $6, $7, $8,
+                    $9, $10, $11, $12, $13,
+                    $14, NOW(), NULL, NULL, NULL, NOW(), $15::jsonb
+                )
+                ON CONFLICT (payment_id) DO NOTHING
+                """,
+                str(payload.get("payment_id") or ""),
+                int(payload.get("user_id") or 0),
+                str(payload.get("plan_id") or ""),
+                float(payload.get("amount") or 0),
+                str(payload.get("status") or "pending"),
+                str(payload.get("provider") or ""),
+                str(payload.get("provider_payment_id") or payload.get("itpay_id") or ""),
+                payload.get("msg_id"),
+                payload.get("recipient_user_id"),
+                str(payload.get("promo_code") or ""),
+                float(payload.get("promo_discount_percent") or 0),
+                str(payload.get("gift_label") or ""),
+                str(payload.get("last_error") or ""),
+                int(payload.get("activation_attempts") or 0),
+                json.dumps({"legacy_payload": payload}, ensure_ascii=False, default=str),
+            )
+        return int(result.split()[-1]) > 0
+
     async def get_intent(self, payment_id: str) -> dict[str, Any] | None:
         async with self.db.pool.acquire() as conn:  # type: ignore[union-attr]
             row = await conn.fetchrow(
@@ -120,13 +154,14 @@ class PaymentRepository:
         source: str = "",
         reason: str = "",
         metadata: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> int:
         payload = json.dumps(metadata or {}, ensure_ascii=False)
         async with self.db.pool.acquire() as conn:  # type: ignore[union-attr]
-            await conn.execute(
+            row = await conn.fetchrow(
                 """
                 INSERT INTO payment_status_history(payment_id, from_status, to_status, source, reason, metadata_json, created_at)
                 VALUES($1, $2, $3, $4, $5, $6::jsonb, NOW())
+                RETURNING id
                 """,
                 payment_id,
                 from_status,
@@ -135,6 +170,7 @@ class PaymentRepository:
                 reason,
                 payload,
             )
+        return int(row["id"])
 
     async def mark_error(self, payment_id: str, error_text: str) -> bool:
         async with self.db.pool.acquire() as conn:  # type: ignore[union-attr]

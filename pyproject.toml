@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "kkbot-panel"
 version = "2.0.0"
-description = "KKBOT PANEL V2.0: Telegram bot with PostgreSQL-first storage, legacy SQLite import, and mixed Python/Go tooling."
+description = "KKBOT PANEL V2.0: Telegram bot with PostgreSQL storage, SQLite one-time import, and mixed Python/Go tooling."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -17,7 +17,6 @@ dependencies = [
 
 [project.scripts]
 kkbot-v2 = "kkbot.__main__:main"
-kkbot-legacy = "kkbot.tools.run_legacy_v1:main"
 kkbot-migrate-legacy = "kkbot.tools.migrate_legacy:main"
 
 [project.optional-dependencies]
@@ -25,10 +24,6 @@ dev = [
   "pytest>=8.3.0",
   "pytest-asyncio>=0.24.0",
   "ruff>=0.12.0",
-]
-legacy = [
-  "aiosqlite>=0.20.0",
-  "paramiko>=3.5.0",
 ]
 
 [tool.hatch.build.targets.wheel]
