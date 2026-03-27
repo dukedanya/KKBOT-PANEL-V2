@@ -121,6 +121,19 @@ async def get_subscription_status(user_id: int, db, panel) -> dict[str, Any]:
                 expiry_dt = datetime.fromisoformat(str(expiry_raw).replace("Z", "+00:00"))
             except ValueError:
                 expiry_dt = None
+        if expiry_dt is None:
+            try:
+                base_email = await panel_base_email(user_id, db)
+                clients = await panel.find_clients_full_by_email(base_email)
+                max_expiry = 0
+                for client in clients:
+                    max_expiry = max(max_expiry, int(client.get("expiryTime", 0) or 0))
+                    client_obj = client.get("clientObj") or {}
+                    max_expiry = max(max_expiry, int(client_obj.get("expiryTime", 0) or 0))
+                if max_expiry > 0:
+                    expiry_dt = datetime.fromtimestamp(max_expiry / 1000)
+            except Exception:
+                expiry_dt = None
         plan_text = str(record.get("plan_code") or legacy_user.get("plan_text") or "")
         vpn_url = str(meta.get("vpn_url") or legacy_user.get("vpn_url") or "")
         ip_limit = int(meta.get("ip_limit") or legacy_user.get("ip_limit") or 0)
@@ -190,6 +203,10 @@ async def create_subscription(
             sub_id=str(client.get("subId") or stable_sub_id),
         )
         service = SubscriptionService(postgres_db)
+        client_expiry = int(client.get("expiryTime", 0) or 0)
+        expires_at = None
+        if client_expiry > 0:
+            expires_at = datetime.fromtimestamp(client_expiry / 1000).isoformat()
         await service.create_panel_subscription(
             user_id=user_id,
             plan_code=plan_name,
@@ -199,6 +216,7 @@ async def create_subscription(
             panel_sub_id=str(client.get("subId") or stable_sub_id),
             panel_client_uuid=client_uuid,
             created_inbounds=client.get("created_inbounds") or [],
+            expires_at=expires_at,
             ip_limit=int(plan.get("ip_limit", 0) or 0),
         )
         return vpn_url

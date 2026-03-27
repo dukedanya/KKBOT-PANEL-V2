@@ -780,7 +780,7 @@ async def _build_incident_report_detail(db: Database, panel, payment_gateway, *,
 async def _build_user_card_text(db: Database, user_id: int, *, display_name_override: str | None = None) -> str:
     payload = await db.get_user_card(user_id) if hasattr(db, "get_user_card") else {}
     if not payload:
-        return f"👤 <b>Карточка пользователя</b>\n\nПользователь <code>{user_id}</code> не найден."
+        return f"👤 <b>Карточка пользователя | Какой-то VPN бот</b>\n\nПользователь <code>{user_id}</code> не найден."
     user = payload.get("user") or {}
     referral = payload.get("referral_summary") or {}
     partner = payload.get("partner_settings") or {}
@@ -830,7 +830,7 @@ async def _build_user_card_text(db: Database, user_id: int, *, display_name_over
         display_parts.append(first_name)
     display_name = display_name_override or (" | ".join(display_parts) if display_parts else "—")
     return (
-        "👤 <b>Карточка пользователя</b>\n\n"
+        "👤 <b>Карточка пользователя | Какой-то VPN бот</b>\n\n"
         f"ID: <code>{user_id}</code> • <a href=\"tg://user?id={user_id}\">Открыть чат</a>\n"
         f"Имя: <code>{escape(display_name)}</code>\n"
         f"Дата входа: <code>{user.get('join_date') or '-'}</code>\n"
@@ -1018,10 +1018,7 @@ def _admin_content_menu_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="📝 Шаблоны", callback_data="admin:templates"),
             InlineKeyboardButton(text="📣 Рассылки", callback_data="adminmenu:bulk"),
         ],
-        [
-            InlineKeyboardButton(text="📨 Главное сообщение", callback_data="admin:main_message"),
-            InlineKeyboardButton(text="📦 Тестовая подписка", callback_data="admin:test_subscription"),
-        ],
+        [InlineKeyboardButton(text="📨 Главное сообщение", callback_data="admin:main_message")],
         [InlineKeyboardButton(text="⬅️ К дашборду", callback_data="admin_dashboard")],
     ])
 
@@ -1054,10 +1051,7 @@ def _admin_service_menu_keyboard(*, safe_mode_enabled: bool = False) -> InlineKe
             InlineKeyboardButton(text="⭐ Stars", callback_data="admin:stars_settings"),
             InlineKeyboardButton(text="🤝 Реф. настройки", callback_data="admin:ref_settings"),
         ],
-        [
-            InlineKeyboardButton(text="📦 Тестовая подписка", callback_data="admin:test_subscription"),
-            InlineKeyboardButton(text=safe_mode_label, callback_data="admin:safe_mode:toggle"),
-        ],
+        [InlineKeyboardButton(text=safe_mode_label, callback_data="admin:safe_mode:toggle")],
         [
             InlineKeyboardButton(text="🧩 Inbound панели", callback_data="admin:panel_inbounds"),
             InlineKeyboardButton(text="🗓 Инциденты за день", callback_data="admindash:incidents:0"),
@@ -1305,7 +1299,7 @@ async def admin_content_menu_callback(callback: CallbackQuery):
         return
     await smart_edit_message(
         callback.message,
-        "📝 <b>Контент и продажи</b>\n\nТарифы, промокоды, шаблоны, рассылки и тестовая выдача подписки.",
+        "📝 <b>Контент и продажи</b>\n\nТарифы, промокоды, шаблоны, рассылки и главное сообщение.",
         reply_markup=_admin_content_menu_keyboard(),
         parse_mode="HTML",
     )
@@ -1638,6 +1632,7 @@ async def admin_user_card_grant_tariff_confirm(callback: CallbackQuery, db: Data
         db=db,
         panel=panel,
         plan_suffix=" (выдан админом)",
+        preserve_active_days=True,
     )
     if not vpn_url:
         await callback.answer("Не удалось выдать тариф", show_alert=True)
@@ -2172,7 +2167,7 @@ async def admin_exit_callback(callback: CallbackQuery):
 
 
 @router.message(PaymentDiagnosticsFSM.waiting_inbound_count)
-async def admin_panel_inbounds_count_save(message: Message, state: FSMContext, bot: Bot):
+async def admin_panel_inbounds_count_save(message: Message, state: FSMContext, bot: Bot, db: Database):
     if not is_admin(message.from_user.id):
         await state.clear()
         return
@@ -2189,6 +2184,7 @@ async def admin_panel_inbounds_count_save(message: Message, state: FSMContext, b
         await message.answer(f"❌ Введите число от 0 до {len(configured)}.")
         return
     Config.set_panel_target_inbound_count(value)
+    await db.set_setting("system:panel_target_inbound_count", str(value))
     _write_env_variable("PANEL_TARGET_INBOUND_COUNT", str(value))
     await state.clear()
     try:
@@ -2204,7 +2200,7 @@ async def admin_panel_inbounds_count_save(message: Message, state: FSMContext, b
 
 
 @router.message(PaymentDiagnosticsFSM.waiting_inbound_ids)
-async def admin_panel_inbounds_ids_save(message: Message, state: FSMContext, bot: Bot):
+async def admin_panel_inbounds_ids_save(message: Message, state: FSMContext, bot: Bot, db: Database):
     if not is_admin(message.from_user.id):
         await state.clear()
         return
@@ -2213,8 +2209,10 @@ async def admin_panel_inbounds_ids_save(message: Message, state: FSMContext, bot
         await message.answer("❌ Отправьте хотя бы один корректный числовой ID.")
         return
     Config.set_panel_target_inbound_ids(",".join(str(item) for item in ids))
+    await db.set_setting("system:panel_target_inbound_ids", ",".join(str(item) for item in ids))
     if Config.PANEL_TARGET_INBOUND_COUNT > len(ids):
         Config.set_panel_target_inbound_count(len(ids))
+        await db.set_setting("system:panel_target_inbound_count", str(len(ids)))
         _write_env_variable("PANEL_TARGET_INBOUND_COUNT", str(len(ids)))
     _write_env_variable("PANEL_TARGET_INBOUND_IDS", ",".join(str(item) for item in ids))
     await state.clear()

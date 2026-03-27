@@ -366,33 +366,29 @@ class PanelAPI:
             protocol = inbound.get("protocol", "").lower()
             client_stats = inbound.get("clientStats", []) or []
             clients = self._parse_inbound_clients(inbound)
+            stats_by_email = {
+                str(item.get("email") or ""): item
+                for item in client_stats
+                if str(item.get("email") or "")
+            }
 
-            for stat in client_stats:
-                email = stat.get("email", "") or ""
+            for c in clients:
+                email = c.get("email", "") or ""
                 if not self._matches_base_email_for_inbound(email, base_email, inbound_id):
                     continue
 
-                client_id = None
-                password = None
-                sub_id = None
-                client_obj = None
-
-                for c in clients:
-                    c_email = c.get("email", "") or ""
-                    if c_email == email:
-                        client_id = c.get("id") or c.get("clientId")
-                        password = c.get("password")
-                        sub_id = c.get("subId")
-                        client_obj = c
-                        break
-
+                stat = stats_by_email.get(email, {})
                 item = dict(stat)
+                item.setdefault("email", email)
+                item.setdefault("enable", c.get("enable"))
+                item.setdefault("expiryTime", c.get("expiryTime"))
+                item.setdefault("total", c.get("totalGB"))
                 item["inboundId"] = inbound_id
-                item["clientId"] = client_id
-                item["password"] = password
-                item["subId"] = sub_id
+                item["clientId"] = c.get("id") or c.get("clientId")
+                item["password"] = c.get("password")
+                item["subId"] = c.get("subId")
                 item["protocol"] = protocol
-                item["clientObj"] = client_obj
+                item["clientObj"] = c
                 result.append(item)
 
         logger.info(f"Найдено {len(result)} клиентов по base_email='{base_email}'")

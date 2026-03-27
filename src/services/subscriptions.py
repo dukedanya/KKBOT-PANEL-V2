@@ -44,12 +44,17 @@ async def get_remaining_active_days(user_id: int, panel: PanelAPI, db: Database)
     """Возвращает остаток активных дней по клиенту, округляя вверх до целого дня."""
     try:
         base_email = await panel_base_email(user_id, db)
-        clients = await panel.find_clients_by_base_email(base_email)
+        clients = await panel.find_clients_full_by_email(base_email)
         if not clients:
             return 0
 
         now_ms = int(time.time() * 1000)
-        max_expiry = max((c.get("expiryTime", 0) or 0) for c in clients)
+        max_expiry = 0
+        for client in clients:
+            client_expiry = int(client.get("expiryTime", 0) or 0)
+            client_obj = client.get("clientObj") or {}
+            client_obj_expiry = int(client_obj.get("expiryTime", 0) or 0)
+            max_expiry = max(max_expiry, client_expiry, client_obj_expiry)
         if max_expiry <= now_ms:
             return 0
 
@@ -74,8 +79,12 @@ async def get_subscription_status(user_id: int, db: Database, panel: PanelAPI) -
     expiry_dt = None
     if active:
         base_email = await panel_base_email(user_id, db)
-        clients = await panel.find_clients_by_base_email(base_email)
-        expiry_times = [(c.get("expiryTime", 0) or 0) for c in clients]
+        clients = await panel.find_clients_full_by_email(base_email)
+        expiry_times = []
+        for client in clients:
+            expiry_times.append(int(client.get("expiryTime", 0) or 0))
+            client_obj = client.get("clientObj") or {}
+            expiry_times.append(int(client_obj.get("expiryTime", 0) or 0))
         max_expiry = max(expiry_times) if expiry_times else 0
         if max_expiry > 0:
             expiry_dt = datetime.fromtimestamp(max_expiry / 1000)

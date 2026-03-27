@@ -88,12 +88,17 @@ def format_duration(days: int) -> str:
 
 def format_price(plan: Dict[str, Any]) -> str:
     price = float(plan.get("price_rub", 0) or 0)
+    old_price = float(plan.get("old_price_rub", 0) or 0)
     duration = int(plan.get("duration_days", 30) or 30)
     if price == 0:
         return f"Бесплатно на {duration} дн."
-    unit = "мес." if duration == 30 else f"{duration} дн."
+    if old_price > price > 0:
+        discount_percent = int(round((old_price - price) * 100 / old_price))
+        old_value = int(old_price) if old_price.is_integer() else old_price
+        new_value = int(price) if price.is_integer() else price
+        return f"<s>{old_value} ₽</s> {new_value} ₽ (-{discount_percent}%)"
     value = int(price) if price.is_integer() else price
-    return f"{value} ₽ / {unit}"
+    return f"{value} ₽"
 
 
 def format_stars_price(plan: Dict[str, Any]) -> str:

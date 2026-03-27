@@ -1,0 +1,95 @@
+{
+  "plans": [
+    {
+      "id": "trial",
+      "name": "Пробный",
+      "price_rub": 0,
+      "old_price_rub": null,
+      "ip_limit": 1,
+      "traffic_gb": 1.0,
+      "duration_days": 1,
+      "description": "NL",
+      "active": true,
+      "sort": 1,
+      "price_stars": null
+    },
+    {
+      "id": "basic",
+      "name": "Месяц",
+      "price_rub": 25,
+      "old_price_rub": null,
+      "ip_limit": 3,
+      "traffic_gb": 1000,
+      "duration_days": 30,
+      "description": "NL",
+      "active": true,
+      "sort": 2,
+      "price_stars": null
+    },
+    {
+      "id": "standard",
+      "name": "3 Месяца",
+      "price_rub": 550,
+      "old_price_rub": 600,
+      "ip_limit": 3,
+      "traffic_gb": 3500,
+      "duration_days": 90,
+      "description": "NL",
+      "active": true,
+      "sort": 3,
+      "price_stars": null
+    },
+    {
+      "id": "semiannual",
+      "name": "6 Месяцев",
+      "price_rub": 1000,
+      "old_price_rub": 1200,
+      "ip_limit": 3,
+      "traffic_gb": 7000,
+      "duration_days": 180,
+      "description": "NL",
+      "active": true,
+      "sort": 4,
+      "price_stars": null
+    },
+    {
+      "id": "family_basic",
+      "name": "Месяц | Семейный доступ",
+      "price_rub": 450,
+      "old_price_rub": null,
+      "ip_limit": 10,
+      "traffic_gb": 1000,
+      "duration_days": 30,
+      "description": "NL",
+      "active": true,
+      "sort": 5,
+      "price_stars": null
+    },
+    {
+      "id": "family_standard",
+      "name": "3 Месяца | Семейный доступ",
+      "price_rub": 1150,
+      "old_price_rub": 1350,
+      "ip_limit": 10,
+      "traffic_gb": 3500,
+      "duration_days": 90,
+      "description": "NL",
+      "active": true,
+      "sort": 6,
+      "price_stars": null
+    },
+    {
+      "id": "family_semiannual",
+      "name": "6 Месяцев | Семейный доступ",
+      "price_rub": 2150,
+      "old_price_rub": 2700,
+      "ip_limit": 10,
+      "traffic_gb": 7000,
+      "duration_days": 180,
+      "description": "NL",
+      "active": true,
+      "sort": 7,
+      "price_stars": null
+    }
+  ]
+}

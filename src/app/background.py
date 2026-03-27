@@ -144,8 +144,7 @@ async def reconcile_provider_payments(ctx: BackgroundContext) -> None:
 
     while True:
         try:
-            await asyncio.sleep(Config.PAYMENT_RECONCILE_INTERVAL_SEC)
-            pending = await ctx.db.get_all_pending_payments(statuses=["pending"])
+            pending = await ctx.db.get_all_pending_payments(statuses=["pending", "processing"])
             provider_name = getattr(ctx.payment_gateway, "provider_name", Config.PAYMENT_PROVIDER)
             for payment in pending:
                 if payment.get("provider") not in (None, "", provider_name):
@@ -194,6 +193,7 @@ async def reconcile_provider_payments(ctx: BackgroundContext) -> None:
                             remote_status,
                             result.get("reason"),
                         )
+            await asyncio.sleep(Config.PAYMENT_RECONCILE_INTERVAL_SEC)
         except Exception as exc:
             logger.error("Payment reconcile loop failed: %s", exc)
             await asyncio.sleep(Config.PAYMENT_RECONCILE_INTERVAL_SEC)

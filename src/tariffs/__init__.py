@@ -15,3 +15,9 @@ from .loader import (
     TARIFFS_ACTIVE,
     TARIFFS_BY_ID,
 )
+
+try:
+    load_tariffs()
+except Exception:
+    # Tariffs may be unavailable in some tooling contexts; runtime handlers will surface the error.
+    pass

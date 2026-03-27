@@ -20,6 +20,19 @@ from utils.helpers import set_bot
 
 logger = logging.getLogger(__name__)
 STARS_MULTIPLIER_SETTING_KEY = "system:telegram_stars_price_multiplier"
+RUNTIME_FLOAT_SETTINGS = {
+    "system:ref_percent_level1": "REF_PERCENT_LEVEL1",
+    "system:ref_percent_level2": "REF_PERCENT_LEVEL2",
+    "system:ref_percent_level3": "REF_PERCENT_LEVEL3",
+    "system:min_withdraw": "MIN_WITHDRAW",
+}
+RUNTIME_INT_SETTINGS = {
+    "system:ref_bonus_days": "REF_BONUS_DAYS",
+    "system:panel_target_inbound_count": "PANEL_TARGET_INBOUND_COUNT",
+}
+RUNTIME_STR_SETTINGS = {
+    "system:panel_target_inbound_ids": "PANEL_TARGET_INBOUND_IDS",
+}
 
 
 @dataclass(slots=True)
@@ -49,6 +62,22 @@ async def lifespan() -> AppRuntimeContext:
                 Config.set_stars_price_multiplier(float(raw_stars_multiplier or Config.TELEGRAM_STARS_PRICE_MULTIPLIER))
             except (TypeError, ValueError):
                 logger.warning("Invalid stored Telegram Stars multiplier: %s", raw_stars_multiplier)
+            for setting_key, attr_name in RUNTIME_FLOAT_SETTINGS.items():
+                raw_value = await container.db.get_setting(setting_key, str(getattr(Config, attr_name)))
+                try:
+                    setattr(Config, attr_name, float(raw_value or getattr(Config, attr_name)))
+                except (TypeError, ValueError):
+                    logger.warning("Invalid stored float setting %s=%s", setting_key, raw_value)
+            for setting_key, attr_name in RUNTIME_INT_SETTINGS.items():
+                raw_value = await container.db.get_setting(setting_key, str(getattr(Config, attr_name)))
+                try:
+                    setattr(Config, attr_name, int(float(raw_value or getattr(Config, attr_name))))
+                except (TypeError, ValueError):
+                    logger.warning("Invalid stored int setting %s=%s", setting_key, raw_value)
+            for setting_key, attr_name in RUNTIME_STR_SETTINGS.items():
+                raw_value = await container.db.get_setting(setting_key, str(getattr(Config, attr_name)))
+                if raw_value:
+                    setattr(Config, attr_name, str(raw_value).strip())
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         if Config.MIGRATIONS_AUTO_APPLY:
             applied = await apply_migrations(container.db, base_dir)

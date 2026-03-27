@@ -51,19 +51,16 @@ async def render_profile_text(user_id: int, *, status: dict, panel: PanelAPI, db
         legacy_user = legacy_user or {}
         base_email = await panel_base_email(user_id, db)
         client_stats = await panel.get_client_stats(base_email)
+        full_clients = await panel.find_clients_full_by_email(base_email)
         total_snapshot = await get_total_traffic_snapshot_for_user(user_id, db)
         ip_limit = int(user_data.get("ip_limit") or legacy_user.get("ip_limit") or 0)
         vpn_url = user_data.get("vpn_url") or legacy_user.get("vpn_url") or ""
         traffic_gb = float(user_data.get("traffic_gb") or legacy_user.get("traffic_gb") or 0)
         connection_info = render_connection_info(vpn_url, user_id=user_id, include_sidr=False)
+        expiry_dt = status.get("expiry_dt")
+        expiry_date = expiry_dt.strftime("%d.%m.%Y %H:%M") if expiry_dt else "не указана"
 
         if total_snapshot and total_snapshot.fresh:
-            expiry_time = 0
-            for client in client_stats:
-                client_expiry = client.get("expiryTime", 0)
-                if client_expiry > expiry_time:
-                    expiry_time = client_expiry
-            expiry_date = datetime.fromtimestamp(expiry_time / 1000).strftime("%d.%m.%Y %H:%M") if expiry_time > 0 else "не указана"
             mode = total_snapshot.mode
             if mode == "grace":
                 mode_label = "🐢 Grace-режим"
@@ -92,17 +89,11 @@ async def render_profile_text(user_id: int, *, status: dict, panel: PanelAPI, db
                     f"💰 Баланс: <b>{balance:.2f} ₽</b>",
                 ]
             )
-        elif client_stats:
+        elif client_stats or full_clients:
             used_bytes = 0
-            expiry_time = 0
             for client in client_stats:
                 used_bytes += client.get("up", 0) + client.get("down", 0)
-                client_expiry = client.get("expiryTime", 0)
-                if client_expiry > expiry_time:
-                    expiry_time = client_expiry
             used_gb = used_bytes / 1073741824
-            remaining_gb = max(0, traffic_gb - used_gb)
-            expiry_date = datetime.fromtimestamp(expiry_time / 1000).strftime("%d.%m.%Y %H:%M") if expiry_time > 0 else "не указана"
             sub_lines = [
                 "",
                 "📦 <b>Текущая подписка</b>",

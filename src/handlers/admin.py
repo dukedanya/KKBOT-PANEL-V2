@@ -28,6 +28,13 @@ from utils.templates import (
 logger = logging.getLogger(__name__)
 router = Router()
 STARS_MULTIPLIER_SETTING_KEY = "system:telegram_stars_price_multiplier"
+REF_SETTING_KEYS = {
+    "REF_BONUS_DAYS": "system:ref_bonus_days",
+    "REF_PERCENT_LEVEL1": "system:ref_percent_level1",
+    "REF_PERCENT_LEVEL2": "system:ref_percent_level2",
+    "REF_PERCENT_LEVEL3": "system:ref_percent_level3",
+    "MIN_WITHDRAW": "system:min_withdraw",
+}
 
 
 class TariffEditFSM(StatesGroup):
@@ -72,6 +79,7 @@ def _optional_int_or_none(raw: str):
 TARIFF_FIELDS = {
     "name": ("Название", str),
     "price_rub": ("Цена (руб)", int),
+    "old_price_rub": ("Старая цена (руб)", _optional_int_or_none),
     "duration_days": ("Дней", int),
     "ip_limit": ("Устройств", int),
     "traffic_gb": ("Трафик ГБ", float),
@@ -253,6 +261,7 @@ def _ref_settings_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text=f"💸 Мин. вывод: {Config.MIN_WITHDRAW} ₽", callback_data="admin:refedit:MIN_WITHDRAW")],
         [InlineKeyboardButton(text="🎯 Индивидуальные условия", callback_data="admin:partner_rates_prompt")],
         [InlineKeyboardButton(text="💰 Корректировка баланса", callback_data="admin:partner_balance_prompt")],
+        [InlineKeyboardButton(text="📋 Реферальный аудит", callback_data="admin:ref_audit")],
         [InlineKeyboardButton(text="🚨 Suspicious referrals", callback_data="admin:ref_suspicious")],
         [InlineKeyboardButton(text="⬅️ К сервису", callback_data="adminmenu:service")],
     ])
@@ -281,6 +290,73 @@ async def _render_ref_settings(message_obj):
         f"💸 Минимальный вывод: <b>{Config.MIN_WITHDRAW} ₽</b>"
     )
     await smart_edit_message(message_obj, text, reply_markup=_ref_settings_keyboard(), parse_mode="HTML")
+
+
+async def _build_ref_audit_text(db: Database) -> str:
+    users = await db.get_all_users() if hasattr(db, "get_all_users") else []
+    referred = []
+    for row in users:
+        ref_by = int(row.get("ref_by") or 0)
+        if ref_by > 0:
+            referred.append(row)
+    referred.sort(key=lambda item: str(item.get("join_date") or ""), reverse=True)
+    gifts = await db.list_recent_claimed_gift_links(limit=10) if hasattr(db, "list_recent_claimed_gift_links") else []
+    lines = [
+        "📋 <b>Реферальный аудит</b>",
+        "",
+        f"Привязанных пользователей: <b>{len(referred)}</b>",
+        "",
+        "<b>Последние обычные / стартовые привязки</b>",
+    ]
+    if not referred:
+        lines.append("• пока нет данных")
+    else:
+        for row in referred[:12]:
+            lines.append(
+                f"• user <code>{row.get('user_id')}</code> ← ref <code>{int(row.get('ref_by') or 0)}</code> "
+                f"• <code>{row.get('join_date') or '-'}</code>"
+            )
+    lines.extend(["", "<b>Последние активации подарков</b>"])
+    if not gifts:
+        lines.append("• пока нет данных")
+    else:
+        for row in gifts[:10]:
+            buyer = int(row.get("buyer_user_id") or 0)
+            claimed_by = int(row.get("claimed_by_user_id") or 0)
+            note = str(row.get("note") or "").strip()
+            note_suffix = f" — {_trim_text(note, 40)}" if note else ""
+            lines.append(
+                f"• buyer <code>{buyer}</code> → user <code>{claimed_by}</code> "
+                f"• <code>{row.get('claimed_at') or row.get('created_at') or '-'}</code>{note_suffix}"
+            )
+    return "\n".join(lines)
+
+
+def _build_ref_audit_keyboard(referred: list[dict], gifts: list[dict]) -> InlineKeyboardMarkup:
+    seen: set[int] = set()
+    rows: list[list[InlineKeyboardButton]] = []
+
+    def add_user_button(user_id: int) -> None:
+        if user_id <= 0 or user_id in seen:
+            return
+        seen.add(user_id)
+        rows.append([
+            InlineKeyboardButton(
+                text=f"👤 user {user_id}",
+                callback_data=f"admin:usercard:{user_id}",
+            )
+        ])
+
+    for row in referred[:8]:
+        add_user_button(int(row.get("user_id") or 0))
+        add_user_button(int(row.get("ref_by") or 0))
+
+    for row in gifts[:8]:
+        add_user_button(int(row.get("buyer_user_id") or 0))
+        add_user_button(int(row.get("claimed_by_user_id") or 0))
+
+    rows.append([InlineKeyboardButton(text="⬅️ К сервису", callback_data="adminmenu:service")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 async def _process_withdraw(callback: CallbackQuery, db: Database, *, accept: bool) -> None:
@@ -700,24 +776,6 @@ async def admin_withdraw_requests(message: Message, db: Database, bot: Bot):
         await bot.send_message(user_id, text, reply_markup=keyboard)
 
 
-@router.message(F.text == "📦 Создать тестовую подписку")
-async def admin_test_subscription(message: Message, bot: Bot):
-    user_id = message.from_user.id
-    if not is_admin(user_id):
-        return
-    plans = get_all_active()
-    text = build_buy_text(plans)
-    keyboard = [[InlineKeyboardButton(text=plan.get("name", plan.get("id")), callback_data=f"test:{plan.get('id')}")] for plan in plans]
-    keyboard.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_admin")])
-    await replace_message(
-        user_id,
-        text,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
-        delete_user_msg=message,
-        bot=bot,
-    )
-
-
 @router.callback_query(F.data == "back_to_admin")
 async def back_to_admin(callback: CallbackQuery, bot: Bot):
     user_id = callback.from_user.id
@@ -923,6 +981,7 @@ async def tariff_add(callback: CallbackQuery):
             "name": "Новый тариф",
             "active": False,
             "price_rub": 0,
+            "old_price_rub": None,
             "duration_days": 30,
             "ip_limit": 1,
             "traffic_gb": 50,
@@ -1073,19 +1132,6 @@ async def admin_tariffs_callback(callback: CallbackQuery):
     await callback.answer()
 
 
-@router.callback_query(F.data == "admin:test_subscription")
-async def admin_test_subscription_callback(callback: CallbackQuery):
-    if not is_admin(callback.from_user.id):
-        await callback.answer("⛔ Недостаточно прав", show_alert=True)
-        return
-    plans = get_all_active()
-    text = build_buy_text(plans)
-    keyboard = [[InlineKeyboardButton(text=plan.get("name", plan.get("id")), callback_data=f"test:{plan.get('id')}")] for plan in plans]
-    keyboard.append([InlineKeyboardButton(text="⬅️ К дашборду", callback_data="admin_dashboard")])
-    await smart_edit_message(callback.message, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard), parse_mode="HTML")
-    await callback.answer()
-
-
 @router.callback_query(F.data == "admin:ref_settings")
 async def admin_ref_settings(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
@@ -1119,7 +1165,7 @@ async def admin_ref_setting_prompt(callback: CallbackQuery, state: FSMContext):
 
 
 @router.message(ReferralSettingsFSM.field)
-async def admin_ref_setting_save(message: Message, state: FSMContext, bot: Bot):
+async def admin_ref_setting_save(message: Message, state: FSMContext, bot: Bot, db: Database):
     if not is_admin(message.from_user.id):
         await state.clear()
         return
@@ -1134,6 +1180,9 @@ async def admin_ref_setting_save(message: Message, state: FSMContext, bot: Bot):
         await message.answer("❌ Введите корректное положительное число")
         return
     _set_config_value(key, value)
+    setting_key = REF_SETTING_KEYS.get(str(key))
+    if setting_key:
+        await db.set_setting(setting_key, str(int(value) if key == "REF_BONUS_DAYS" else value))
     _write_env_variable(key, str(int(value) if key == "REF_BONUS_DAYS" else value))
     await state.clear()
     try:
@@ -1256,6 +1305,29 @@ async def admin_ref_suspicious(callback: CallbackQuery, db: Database):
         for row in rows:
             text += f"• user <code>{row.get('user_id')}</code> ← ref <code>{row.get('ref_by') or 0}</code>\n  {row.get('partner_note') or 'без заметки'}\n"
     await smart_edit_message(callback.message, text, parse_mode='HTML', reply_markup=_ref_settings_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin:ref_audit")
+async def admin_ref_audit(callback: CallbackQuery, db: Database):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Недостаточно прав", show_alert=True)
+        return
+    text = await _build_ref_audit_text(db)
+    users = await db.get_all_users() if hasattr(db, "get_all_users") else []
+    referred = []
+    for row in users:
+        ref_by = int(row.get("ref_by") or 0)
+        if ref_by > 0:
+            referred.append(row)
+    referred.sort(key=lambda item: str(item.get("join_date") or ""), reverse=True)
+    gifts = await db.list_recent_claimed_gift_links(limit=10) if hasattr(db, "list_recent_claimed_gift_links") else []
+    await smart_edit_message(
+        callback.message,
+        text,
+        parse_mode="HTML",
+        reply_markup=_build_ref_audit_keyboard(referred, gifts),
+    )
     await callback.answer()
 
 

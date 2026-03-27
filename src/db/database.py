@@ -2023,6 +2023,22 @@ class Database:
             rows = await cursor.fetchall()
         return self._rows_to_dicts(rows)
 
+    async def list_recent_claimed_gift_links(self, limit: int = 20) -> List[Dict[str, Any]]:
+        if not self.conn:
+            return []
+        async with self.lock:
+            cursor = await self.conn.execute(
+                """
+                SELECT * FROM gift_links
+                WHERE claimed_by_user_id IS NOT NULL
+                ORDER BY COALESCE(claimed_at, created_at) DESC
+                LIMIT ?
+                """,
+                (int(limit),),
+            )
+            rows = await cursor.fetchall()
+        return self._rows_to_dicts(rows)
+
     async def list_unclaimed_gift_links_for_reminder(self, *, hours: int, limit: int = 20) -> List[Dict[str, Any]]:
         if not self.conn:
             return []

@@ -1088,7 +1088,8 @@ async def _buy_plan_with_provider_locked(callback: CallbackQuery, db, payment_ga
                 f"📦 Тариф: <b>{plan_name}</b>\n"
                 f"💰 Сумма: <b>{price_line}</b>\n\n"
                 "Нажмите кнопку ниже для перехода к оплате.\n"
-                "После оплаты подписка активируется <b>автоматически</b>."
+                "После оплаты подписка активируется <b>автоматически</b>.\n"
+                "Обычно это занимает <b>до 1 минуты</b>, вручную ничего проверять не нужно."
             )
             text += f"{gift_line}{promo_line}"
             inline = []
@@ -1112,43 +1113,6 @@ async def _buy_plan_with_provider_locked(callback: CallbackQuery, db, payment_ga
 @router.callback_query(F.data == "cancel_payment")
 async def cancel_payment(callback: CallbackQuery, db):
     await show_plans_list(callback.from_user.id, db=db, bot=callback.bot, message_id=callback.message.message_id, callback_message=callback.message)
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("test:"))
-async def test_plan(callback: CallbackQuery, db, panel):
-    user_id = callback.from_user.id
-    if user_id not in Config.ADMIN_USER_IDS:
-        await callback.answer("⛔ Только для администраторов!", show_alert=True)
-        return
-
-    plan_id = callback.data.split(":", 1)[1]
-    plan = get_by_id(plan_id)
-    if not plan:
-        await callback.answer("❌ Тариф не найден", show_alert=True)
-        return
-
-    vpn_url = await create_subscription(user_id, plan, db=db, panel=panel)
-    if vpn_url:
-        connection_info = render_connection_info(vpn_url, user_id=user_id, plan_name=plan.get("name", plan_id))
-        text = (
-            "✅ <b>Тестовая подписка создана!</b>\n\n"
-            f"Тариф: <b>{plan.get('name', plan_id)} (тест)</b>\n"
-            f"IP-адреса: <b>до {plan.get('ip_limit', 0)}</b>\n"
-            f"Трафик: <b>{format_traffic(plan.get('traffic_gb', 0))}</b>\n"
-            f"Срок: <b>{format_duration(int(plan.get('duration_days', 30)))}</b>\n\n"
-            f"{connection_info}\n\n"
-            "Клиент: <b>Happ</b>\n"
-            'iOS/macOS — <a href="https://apps.apple.com/ru/app/happ-proxy-utility-plus/id6746188973">App Store</a>\n'
-            'Android — <a href="https://play.google.com/store/apps/details?id=com.happproxy">Google Play</a>\n'
-            'Windows — <a href="https://github.com/Happ-proxy/happ-desktop/releases/latest/download/setup-Happ.x64.exe">Скачать</a>'
-        )
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")]]
-        )
-        await smart_edit_message(callback.message, text, reply_markup=keyboard)
-    else:
-        await callback.answer("❌ Ошибка создания тестовой подписки", show_alert=True)
     await callback.answer()
 
 
