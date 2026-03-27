@@ -31,7 +31,11 @@ async def inline_share_menu(query: InlineQuery, db: Database):
     if not user:
         await db.add_user(user_id)
 
-    bot_username = getattr(query.bot, "username", None) or ""
+    bot_username = (
+        getattr(query.bot, "username", None)
+        or getattr(Config, "BOT_PUBLIC_USERNAME", "")
+        or ""
+    ).strip().lstrip("@")
     bot_link = f"https://t.me/{bot_username}" if bot_username else "https://t.me/"
 
     ref_code = await db.ensure_ref_code(user_id)
@@ -133,28 +137,31 @@ async def inline_share_menu(query: InlineQuery, db: Database):
             )
         )
 
-    if _matches(query_text, "guide", "инструк", "help", "happ", "подключ", ""):
+    if _matches(query_text, "install", "установ", "скач", "client", "клиент", ""):
         connect_link = f"{bot_link}?start=connect" if bot_username else bot_link
         results.append(
             InlineQueryResultArticle(
-                id="instruction",
-                title="📱 Инструкция по подключению",
-                description="Открыть бота и выбрать систему для подключения",
+                id="install_instruction",
+                title="⬇️ Как установить VPN",
+                description="Открыть бота и выбрать систему для установки клиента",
                 input_message_content=InputTextMessageContent(
                     message_text=(
-                        "📱 <b>Подключение к VPN</b>\n\n"
-                        "Откройте бота и выберите свою систему.\n\n"
-                        "Внутри мы подскажем:\n"
+                        "⬇️ <b>Как установить VPN</b>\n\n"
+                        "Откройте бота и выберите своё устройство.\n\n"
+                        "Дальше мы подскажем:\n"
                         "• какой клиент установить\n"
-                        "• почему рекомендуем Happ\n"
-                        "• как подключить подписку\n\n"
-                        "Дальше просто выберите устройство: iPhone / Mac, Android или Windows."
+                        "• где его скачать\n"
+                        "• как потом подключить подписку\n\n"
+                        "Поддерживаются:\n"
+                        "• iPhone / Mac\n"
+                        "• Android\n"
+                        "• Windows"
                     ),
                     parse_mode="HTML",
                 ),
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [InlineKeyboardButton(text="📱 Подключение", url=connect_link)],
+                        [InlineKeyboardButton(text="⬇️ Открыть инструкцию", url=connect_link)],
                     ]
                 ),
             )

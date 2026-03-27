@@ -15,7 +15,6 @@ from services.antifraud import evaluate_referral_link
 from services.panel import PanelAPI
 from tariffs import format_duration, get_by_id
 from utils.helpers import notify_admins, notify_user
-from utils.onboarding import onboarding_keyboard, onboarding_text
 from utils.subscription_links import render_connection_info
 from utils.telegram_ui import smart_edit_by_ids
 from utils.templates import render_template
@@ -92,6 +91,16 @@ def _compute_retry_delay_sec(attempt: int) -> int:
 def main_menu_inline() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="🏠 Главное меню", callback_data="main_menu")]]
+    )
+
+
+def post_payment_inline() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📱 Подключиться", callback_data="onboarding:start")],
+            [InlineKeyboardButton(text="👤 Личный кабинет", callback_data="user_menu:profile")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="user_menu:main")],
+        ]
     )
 
 
@@ -266,6 +275,7 @@ async def process_successful_payment(
             is_allowed, reason = await evaluate_referral_link(recipient_user_id, buyer_user_id, db=db, bot=bot)
             if is_allowed:
                 await db.set_ref_by(recipient_user_id, buyer_user_id)
+                await db.update_user(recipient_user_id, ref_origin="gift_purchase")
                 user_data = await db.get_user(recipient_user_id)
             else:
                 logger.warning(
@@ -370,15 +380,15 @@ async def process_successful_payment(
                 ]
             )
         else:
-            notify_text, _ = await render_template(
-                db,
-                "payment_success_user",
-                plan_name=plan.get("name", plan_id),
-                ip_limit=plan.get("ip_limit", 0),
-                duration=format_duration(int(plan.get("duration_days", 30)) + bonus_days_for_user),
-                vpn_url=vpn_url,
-                connection_info=connection_info,
+            notify_text = (
+                "✅ <b>Оплата прошла успешно</b>\n\n"
+                "Подписка уже активирована.\n\n"
+                f"📦 Тариф: <b>{plan.get('name', plan_id)}</b>\n"
+                f"📱 Устройств: <b>до {int(plan.get('ip_limit', 0) or 0)}</b>\n"
+                f"⏳ Срок: <b>{format_duration(int(plan.get('duration_days', 30)) + bonus_days_for_user)}</b>\n"
             )
+            if connection_info:
+                notify_text += f"\n{connection_info}"
             if promo_code:
                 if promo_discount_percent > 0:
                     notify_text += f"\n\n🏷 Промокод: <b>{promo_code}</b> (-{promo_discount_percent:.0f}%)"
@@ -386,8 +396,13 @@ async def process_successful_payment(
                     notify_text += f"\n\n🏷 Промокод: <b>{promo_code}</b>"
             if buyer_user_id != recipient_user_id:
                 notify_text += f"\n🎁 Подарок: <b>{gift_label or f'пользователю {recipient_user_id}'}</b>"
-            notify_text += f"\n\n{onboarding_text()}"
-            buyer_markup = onboarding_keyboard()
+            notify_text += (
+                "\n\nЧто дальше:\n"
+                "1. Нажмите «Как подключиться?»\n"
+                "2. Выберите своё устройство\n"
+                "3. Установите клиент и добавьте подписку"
+            )
+            buyer_markup = post_payment_inline()
         try:
             msg_id = payment.get("msg_id")
             if msg_id:
@@ -416,12 +431,21 @@ async def process_successful_payment(
         if not gift_link_token and buyer_user_id != recipient_user_id:
             recipient_text = (
                 "🎁 <b>Вам подарили подписку VPN</b>\n\n"
-                f"Тариф: <b>{plan.get('name', plan_id)}</b>\n\n"
-                f"{connection_info}\n\n"
-                f"{onboarding_text()}"
+                "Доступ уже активирован.\n\n"
+                f"📦 Тариф: <b>{plan.get('name', plan_id)}</b>\n"
+                f"📱 Устройств: <b>до {int(plan.get('ip_limit', 0) or 0)}</b>\n"
+                f"⏳ Срок: <b>{format_duration(int(plan.get('duration_days', 30)) + bonus_days_for_user)}</b>\n"
+            )
+            if connection_info:
+                recipient_text += f"\n{connection_info}"
+            recipient_text += (
+                "\n\nЧто дальше:\n"
+                "1. Нажмите «Подключиться»\n"
+                "2. Выберите своё устройство\n"
+                "3. Установите клиент и добавьте подписку"
             )
             try:
-                await notify_user(recipient_user_id, recipient_text, reply_markup=onboarding_keyboard(), bot=bot)
+                await notify_user(recipient_user_id, recipient_text, reply_markup=post_payment_inline(), bot=bot)
             except Exception as recipient_notify_error:
                 logger.warning("Recipient notify failed: %s", recipient_notify_error)
 

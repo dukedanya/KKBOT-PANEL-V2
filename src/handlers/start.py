@@ -96,6 +96,7 @@ async def _maybe_apply_pending_referrer(*, db: Database, user_id: int, bot: Bot 
     is_allowed, reason = await evaluate_referral_link(user_id, referrer_id, db=db, bot=bot)
     if is_allowed:
         await db.set_ref_by(user_id, referrer_id)
+        await db.update_user(user_id, ref_origin="ref_link")
         await _clear_pending_referrer(db, user_id)
         logger.info("pending referral restored user=%s referrer=%s", user_id, referrer_id)
         return True
@@ -162,6 +163,7 @@ async def _activate_gift_token(*, token: str, user_id: int, db: Database, panel:
         is_allowed, reason = await evaluate_referral_link(user_id, buyer_user_id, db=db, bot=bot)
         if is_allowed:
             await db.set_ref_by(user_id, buyer_user_id)
+            await db.update_user(user_id, ref_origin="gift")
         else:
             logger.warning("gift referral blocked user=%s buyer=%s reason=%s", user_id, buyer_user_id, reason)
     duration_days = int(gift_plan.get("duration_days") or plan.get("duration_days") or 0)
@@ -250,6 +252,15 @@ async def cmd_start(message: Message, state: FSMContext, db: Database, panel: Pa
 
     parts = message.text.strip().split(maxsplit=1) if message.text else []
     ref_param = parts[1] if len(parts) > 1 else ""
+    if ref_param.startswith("admincard_") and user_id in Config.ADMIN_USER_IDS:
+        try:
+            target_user_id = int(ref_param.split("_", 1)[1])
+        except Exception:
+            await message.answer("❌ Не удалось определить пользователя.", parse_mode="HTML")
+            return
+        from handlers.payment_diagnostics import _send_user_card
+        await _send_user_card(message, db, target_user_id, state=state)
+        return
     if ref_param == "connect":
         await message.answer(onboarding_text(), parse_mode="HTML", reply_markup=onboarding_keyboard())
         return
@@ -304,6 +315,7 @@ async def cmd_start(message: Message, state: FSMContext, db: Database, panel: Pa
             is_allowed, reason = await evaluate_referral_link(user_id, referrer_id, db=db, bot=message.bot)
             if is_allowed:
                 await db.set_ref_by(user_id, referrer_id)
+                await db.update_user(user_id, ref_origin="ref_link")
                 await _clear_pending_referrer(db, user_id)
             else:
                 logger.warning("referral link blocked user=%s referrer=%s reason=%s", user_id, referrer_id, reason)

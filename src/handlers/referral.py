@@ -124,7 +124,7 @@ async def build_referral_screen(user_id: int, *, db: Database, panel: PanelAPI, 
         f"• 2 уровень: <b>{_format_percent(rate_l2)}%</b>\n"
         f"• 3 уровень: <b>{_format_percent(rate_l3)}%</b>\n"
         f"Источник ставок: <b>{source_label}</b>\n\n"
-        f"Ваш друг при первой покупке получает <b>скидку {int(Config.REF_FIRST_PAYMENT_DISCOUNT_PERCENT)}%</b> и <b>+{Config.REFERRED_BONUS_DAYS} дней</b> к тарифу. Это действует только на <b>первую оплату</b>.\n\n"
+        f"Если человек пришёл именно по вашей реферальной ссылке, то при <b>первой покупке</b> он получает <b>скидку {int(Config.REF_FIRST_PAYMENT_DISCOUNT_PERCENT)}%</b> и <b>+{Config.REFERRED_BONUS_DAYS} дней</b> к тарифу.\n\n"
         f"🔗 Ваша ссылка:\n<blockquote>{link}</blockquote>\n\n"
         f"Всего приглашено: <b>{total_refs}</b>\n"
         f"Оплатили подписку: <b>{paid_refs}</b>\n"
@@ -172,7 +172,7 @@ async def _show_ref_link(user_id: int, *, db: Database, bot: Bot, user_msg: Opti
             f"• 2 уровень: <b>{_format_percent(rate_l2)}%</b>\n"
             f"• 3 уровень: <b>{_format_percent(rate_l3)}%</b>\n"
             f"Источник ставок: <b>{source_label}</b>\n\n"
-            f"Ваш друг получит <b>скидку {int(Config.REF_FIRST_PAYMENT_DISCOUNT_PERCENT)}%</b> на первую оплату и <b>+{Config.REFERRED_BONUS_DAYS} дней</b> к тарифу."
+            f"Если человек придёт именно по вашей реферальной ссылке, то на <b>первую оплату</b> он получит <b>скидку {int(Config.REF_FIRST_PAYMENT_DISCOUNT_PERCENT)}%</b> и <b>+{Config.REFERRED_BONUS_DAYS} дней</b> к тарифу."
         )
         text = f"🕊️ Отправь своему другу ссылку:\n\n<blockquote>{link}</blockquote>\n\n{bonus_text}"
     if callback:

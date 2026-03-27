@@ -122,6 +122,29 @@ def _format_plan_quote(plan: Dict[str, Any], *, include_duration: bool = True) -
     return "<blockquote>" + "\n".join(parts) + "</blockquote>"
 
 
+def _plan_badge(plan: Dict[str, Any]) -> str:
+    name = str(plan.get("name") or "").lower()
+    duration = int(plan.get("duration_days", 30) or 30)
+    ip_limit = int(plan.get("ip_limit", 0) or 0)
+    if ip_limit >= 10:
+        return "👨‍👩‍👧‍👦 Семейный"
+    if duration >= 180:
+        return "💎 Максимум выгоды"
+    if duration >= 90:
+        return "🔥 Популярный"
+    return "⚡ Быстрый старт"
+
+
+def _plan_savings_line(plan: Dict[str, Any]) -> str:
+    old_price = float(plan.get("old_price_rub", 0) or 0)
+    price = float(plan.get("price_rub", 0) or 0)
+    if old_price > price > 0:
+        diff = old_price - price
+        diff_text = int(diff) if diff.is_integer() else diff
+        return f"Экономия: <b>{diff_text} ₽</b>"
+    return ""
+
+
 def build_tariffs_text(plans: Optional[List[Dict[str, Any]]] = None) -> str:
     plans = plans if plans is not None else get_all_active()
     if not plans:
@@ -140,9 +163,18 @@ def build_buy_text(plans: Optional[List[Dict[str, Any]]] = None) -> str:
     if not plans:
         return "💳 <b>Купить подписку VPN</b>\n\nТарифы временно недоступны."
 
-    lines = ["💳 <b>Выберите тариф</b>", ""]
+    lines = [
+        "💳 <b>Выберите тариф</b>",
+        "",
+        "После оплаты подписка активируется автоматически, и бот сразу проведёт вас к подключению.",
+        "",
+    ]
     for idx, plan in enumerate(plans, 1):
-        lines.append(f"{idx}. <b>{plan.get('name', plan.get('id'))}</b>")
+        badge = _plan_badge(plan)
+        lines.append(f"{idx}. <b>{plan.get('name', plan.get('id'))}</b> · {badge}")
+        savings_line = _plan_savings_line(plan)
+        if savings_line:
+            lines.append(f"   {savings_line}")
         lines.append(f"   {_format_plan_quote(plan, include_duration=True)}")
         lines.append("")
     return "\n".join(lines).strip()

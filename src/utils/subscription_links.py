@@ -113,7 +113,7 @@ def render_connection_info(
 
     lines = [
         "🔗 Ссылка для подключения:",
-        f"<code>{html.escape(clean_url)}</code>",
+        f"<blockquote><code>{html.escape(clean_url)}</code></blockquote>",
     ]
     if include_sidr:
         sidr_url = build_sidr_subscription_url(clean_url, user_id=user_id, plan_name=plan_name)

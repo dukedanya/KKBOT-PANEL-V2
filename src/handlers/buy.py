@@ -65,6 +65,38 @@ def _build_gift_token() -> str:
     return secrets.token_urlsafe(8).replace("-", "").replace("_", "")[:12]
 
 
+def _plan_badge_for_button(plan: dict) -> str:
+    duration = int(plan.get("duration_days", 30) or 30)
+    ip_limit = int(plan.get("ip_limit", 0) or 0)
+    if ip_limit >= 10:
+        return "👨‍👩‍👧‍👦"
+    if duration >= 180:
+        return "💎"
+    if duration >= 90:
+        return "🔥"
+    return "⚡"
+
+
+def _plan_discount_badge(plan: dict) -> str:
+    price = float(plan.get("price_rub") or 0.0)
+    old_price = float(plan.get("old_price_rub") or 0.0)
+    if price <= 0 or old_price <= price + 1e-9:
+        return ""
+    percent = int(round((old_price - price) * 100 / old_price))
+    if percent <= 0:
+        return ""
+    return f" (-{percent}%)"
+
+
+def _plan_button_text(plan: dict) -> str:
+    name = str(plan.get("name") or plan.get("id") or "Тариф")
+    price_value = float(plan.get("price_rub") or 0.0)
+    price = str(int(price_value) if price_value.is_integer() else price_value)
+    badge = _plan_badge_for_button(plan)
+    discount = _plan_discount_badge(plan)
+    return f"{badge} {name} · {price} ₽{discount}"
+
+
 def _format_promo_discount_text(*, code: str, discount_type: str, discount_percent: float, fixed_amount: float) -> str:
     if not code:
         return ""
@@ -221,7 +253,13 @@ async def _provider_button_label(db, provider: str, *, balance: Optional[float] 
 
 async def get_referral_first_payment_offer(user_id: int, db, plan: dict) -> dict:
     user = await db.get_user(user_id)
-    eligible = bool(user and user.get("ref_by") and not user.get("ref_rewarded"))
+    ref_origin = str((user or {}).get("ref_origin") or "").strip().lower()
+    eligible = bool(
+        user
+        and user.get("ref_by")
+        and not user.get("ref_rewarded")
+        and ref_origin not in {"gift", "gift_purchase", "admin_gift", "manual"}
+    )
     discount_pct = float(getattr(Config, "REF_FIRST_PAYMENT_DISCOUNT_PERCENT", 15) or 0)
     bonus_days = int(getattr(Config, "REFERRED_BONUS_DAYS", 5) or 0)
     base_amount = float(plan.get("price_rub", 0) or 0)
@@ -385,8 +423,7 @@ async def show_plans_list(
             text += f"\n\n🏷 Активный промокод: <b>{active_promo}</b>"
     keyboard = []
     for plan in plans:
-        name = plan.get("name", plan.get("id"))
-        keyboard.append([InlineKeyboardButton(text=name, callback_data=f"buy:{plan.get('id')}")])
+        keyboard.append([InlineKeyboardButton(text=_plan_button_text(plan), callback_data=f"buy:{plan.get('id')}")])
     keyboard.append([
         InlineKeyboardButton(text="🎁 Подарить подписку", callback_data="buy:gift_prompt"),
         InlineKeyboardButton(text="🏷 Промокод", callback_data="buy:promo_prompt"),
@@ -661,13 +698,16 @@ async def buy_plan(callback: CallbackQuery, db):
         provider_lines.append(f"• Доступно: <b>{balance:.2f} ₽</b>")
     provider_lines = "\n".join(provider_lines)
     text = (
-        "💳 <b>Выберите способ оплаты</b>\n\n"
+        "💳 <b>Почти готово</b>\n\n"
         f"📦 Тариф: <b>{plan.get('name', plan_id)}</b>\n"
-        f"💰 Стоимость:\n{price_block}\n\n"
-        f"📅 Срок:\n{duration_block}\n"
-        "Оплатить подписку можно несколькими способами:\n"
+        "Что вы получите:\n"
+        "• безлимитный трафик\n"
+        f"• до <b>{int(plan.get('ip_limit', 0) or 0)}</b> устройств\n"
+        f"• срок:\n{duration_block}\n\n"
+        f"Стоимость:\n{price_block}\n\n"
+        "Выберите удобный способ оплаты:\n"
         f"{provider_lines}\n\n"
-        "Выберите удобный способ оплаты ниже."
+        "После оплаты бот автоматически активирует подписку и сразу переведёт вас к подключению."
     )
     if referral_line:
         text += f"\n\n{referral_line}"
@@ -1123,11 +1163,12 @@ async def _buy_plan_with_provider_locked(callback: CallbackQuery, db, payment_ga
                 start_parameter=f"vpn-{plan_id}",
             )
             text = (
-                "⭐ <b>Инвойс отправлен в Telegram</b>\n\n"
+                "⭐ <b>Счёт готов</b>\n\n"
                 f"📦 Тариф: <b>{plan_name}</b>\n"
                 f"⭐ Стоимость: <b>{stars_amount} Stars</b>\n"
                 f"💼 Эквивалент тарифа: <b>{price_line}</b>\n\n"
-                "Оплата пройдёт прямо внутри Telegram. После успешной оплаты подписка активируется автоматически."
+                "Оплата пройдёт прямо внутри Telegram.\n"
+                "После подтверждения подписка активируется автоматически, и бот сразу покажет, как подключиться."
             )
             text += f"{gift_line}{promo_line}"
             inline = _payment_methods_back_markup(plan_id).inline_keyboard
@@ -1139,7 +1180,8 @@ async def _buy_plan_with_provider_locked(callback: CallbackQuery, db, payment_ga
                 f"💰 Сумма: <b>{price_line}</b>\n\n"
                 "Нажмите кнопку ниже для перехода к оплате.\n"
                 "После оплаты подписка активируется <b>автоматически</b>.\n"
-                "Обычно это занимает <b>до 1 минуты</b>, но вы можете проверить платеж вручную."
+                "Обычно это занимает <b>до 1 минуты</b>, после чего бот сразу проведёт вас к подключению.\n"
+                "Если нужно, статус можно проверить вручную."
             )
             text += f"{gift_line}{promo_line}"
             inline = []

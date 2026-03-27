@@ -21,7 +21,6 @@ def user_dashboard_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(text="🎁 Сделать подарок", callback_data="buy:gift_prompt"),
         ],
-        [InlineKeyboardButton(text="🆘 Помощь", callback_data="user_menu:instruction")],
         [InlineKeyboardButton(text="📢 Наш канал", url=Config.TG_CHANNEL)],
     ]
     if is_admin:
@@ -60,7 +59,6 @@ def subscriptions_inline_keyboard(has_subscription: bool = False, is_admin: bool
         [
             InlineKeyboardButton(text="🎁 Подарить", callback_data="buy:gift_prompt"),
         ],
-        [InlineKeyboardButton(text="📱 Подключение", callback_data="onboarding:start")],
     ]
     footer = [InlineKeyboardButton(text="🏠 Главное меню", callback_data="user_menu:main")]
     rows.append(footer)
@@ -100,6 +98,7 @@ def support_menu_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="✉️ Написать в поддержку", callback_data="support:start")],
+            [InlineKeyboardButton(text="❓ Как подключиться?", callback_data="onboarding:start")],
             [InlineKeyboardButton(text="📜 История обращений", callback_data="support:history")],
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="user_menu:main")],
         ]

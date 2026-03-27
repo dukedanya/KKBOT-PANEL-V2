@@ -16,16 +16,16 @@ PLATFORM_LABELS = {
 
 def help_text() -> str:
     return (
-        "🆘 <b>Помощь</b>\n\n"
-        "Здесь мы будем выкладывать самые частые вопросы и ответы на них.\n\n"
-        "Если хотите сразу подключить VPN, нажмите кнопку ниже."
+        "🆘 <b>Поддержка</b>\n\n"
+        "Здесь собраны самые частые вопросы и ответы.\n\n"
+        "Если хотите быстро подключить VPN, откройте раздел ниже."
     )
 
 
 def help_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📱 Подключение", callback_data="onboarding:start")],
+            [InlineKeyboardButton(text="❓ Как подключиться?", callback_data="onboarding:start")],
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="user_menu:main")],
         ]
     )
@@ -33,9 +33,9 @@ def help_keyboard() -> InlineKeyboardMarkup:
 
 def onboarding_text() -> str:
     return (
-        "📱 <b>Подключение</b>\n\n"
-        "Выберите, на какую систему хотите установить приложение.\n\n"
-        "Мы рекомендуем <b>Happ</b> — это самый простой и удобный способ подключить подписку."
+        "❓ <b>Как подключиться?</b>\n\n"
+        "Выберите своё устройство, и я помогу установить клиент и добавить подписку.\n\n"
+        "Мы рекомендуем <b>Happ</b> — через него подключение проходит проще и быстрее всего."
     )
 
 
@@ -80,18 +80,22 @@ def happ_add_url(subscription_url: str) -> str:
 def onboarding_platform_text(*, platform: str, subscription_url: str = "") -> str:
     platform_name = PLATFORM_LABELS.get(str(platform or "").strip().lower(), "устройство")
     lines = [
-        f"📱 <b>Подключение | {platform_name}</b>",
+        f"❓ <b>Как подключиться | {platform_name}</b>",
         "",
         "Мы рекомендуем <b>Happ</b>.",
-        "Через него удобнее всего добавить подписку, быстро подключиться и в любой момент переподключить профиль.",
+        "Через него удобнее всего добавить подписку, быстро подключиться и при необходимости переподключить профиль.",
     ]
     if subscription_url:
         lines.extend(
             [
                 "",
-                "Если кнопка подключения не сработает, вот ваша ссылка.",
-                "Откройте <b>HAPP</b>, нажмите <b>+</b> и выберите <b>Добавить из буфера обмена</b>:",
-                f"<code>{subscription_url}</code>",
+                "Что делать дальше:",
+                "1. Установите клиент по кнопке ниже.",
+                "2. Попробуйте добавить подписку автоматически.",
+                "3. Если это не сработает, откройте <b>HAPP</b>, нажмите <b>+</b> и выберите <b>Добавить из буфера обмена</b>.",
+                "",
+                "Вот ваша ссылка для подключения:",
+                f"<blockquote><code>{subscription_url}</code></blockquote>",
             ]
         )
     else:
