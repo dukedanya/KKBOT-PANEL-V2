@@ -72,7 +72,9 @@ def happ_add_url(subscription_url: str) -> str:
     if not any(key == "format" for key, _ in query_items):
         query_items.append(("format", "plain"))
     query = urlencode(query_items)
-    return urlunparse(parsed._replace(query=query))
+    query_items = [(key, value) for key, value in parse_qsl(query, keep_blank_values=True) if key != "happ"]
+    query_items.append(("happ", "1"))
+    return urlunparse(parsed._replace(query=urlencode(query_items)))
 
 
 def onboarding_platform_text(*, platform: str, subscription_url: str = "") -> str:

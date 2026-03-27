@@ -13,8 +13,6 @@ from aiogram.types import (
 from config import Config
 from db import Database
 from utils.helpers import get_ref_link
-from utils.onboarding import ANDROID_URL, IOS_URL, WINDOWS_URL
-
 logger = logging.getLogger(__name__)
 router = Router()
 
@@ -136,30 +134,27 @@ async def inline_share_menu(query: InlineQuery, db: Database):
         )
 
     if _matches(query_text, "guide", "инструк", "help", "happ", "подключ", ""):
+        connect_link = f"{bot_link}?start=connect" if bot_username else bot_link
         results.append(
             InlineQueryResultArticle(
                 id="instruction",
                 title="📱 Инструкция по подключению",
-                description="Поделиться инструкцией и ссылками на Happ",
+                description="Открыть бота и выбрать систему для подключения",
                 input_message_content=InputTextMessageContent(
                     message_text=(
-                        "📱 <b>Как подключиться к VPN</b>\n\n"
-                        "1. Установите Happ на своё устройство.\n"
-                        "2. Получите ссылку подключения в боте.\n"
-                        "3. Откройте ссылку в Happ.\n"
-                        "4. Включите VPN.\n\n"
-                        "Если что-то не работает, напишите в поддержку."
+                        "📱 <b>Подключение к VPN</b>\n\n"
+                        "Откройте бота и выберите свою систему.\n\n"
+                        "Внутри мы подскажем:\n"
+                        "• какой клиент установить\n"
+                        "• почему рекомендуем Happ\n"
+                        "• как подключить подписку\n\n"
+                        "Дальше просто выберите устройство: iPhone / Mac, Android или Windows."
                     ),
                     parse_mode="HTML",
                 ),
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
-                        [
-                            InlineKeyboardButton(text="🍎 iPhone / Mac", url=IOS_URL),
-                            InlineKeyboardButton(text="🤖 Android", url=ANDROID_URL),
-                        ],
-                        [InlineKeyboardButton(text="🪟 Windows", url=WINDOWS_URL)],
-                        [InlineKeyboardButton(text="🤖 Открыть бота", url=bot_link)],
+                        [InlineKeyboardButton(text="📱 Подключение", url=connect_link)],
                     ]
                 ),
             )

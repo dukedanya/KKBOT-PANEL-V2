@@ -250,6 +250,9 @@ async def cmd_start(message: Message, state: FSMContext, db: Database, panel: Pa
 
     parts = message.text.strip().split(maxsplit=1) if message.text else []
     ref_param = parts[1] if len(parts) > 1 else ""
+    if ref_param == "connect":
+        await message.answer(onboarding_text(), parse_mode="HTML", reply_markup=onboarding_keyboard())
+        return
     existing_user = await db.get_user(user_id)
     if ref_param.startswith("gift_"):
         token = ref_param[5:].strip()

@@ -44,3 +44,23 @@ class PostgresOnlyRuntimeTests(unittest.IsolatedAsyncioTestCase):
             fake_pg.connect.assert_awaited_once()
             fake_pg.close.assert_awaited_once()
             import_mock.assert_awaited_once()
+
+    async def test_get_user_does_not_resurrect_deleted_user_from_legacy_payload(self) -> None:
+        fake_repo = AsyncMock()
+        fake_repo.get_user_snapshot = AsyncMock(return_value=None)
+        fake_meta = AsyncMock()
+        fake_meta.get_legacy_payload = AsyncMock(
+            return_value={"user_id": 1077469521, "ref_by": 794419497, "balance": 50.0}
+        )
+
+        with patch("db.adaptive_database.Config.DATABASE_URL", "postgresql://test"):
+            from db.adaptive_database import Database
+
+            db = Database("/tmp/users.db")
+            db._user_repo = lambda: fake_repo  # type: ignore[method-assign]
+            db._meta_repo = lambda: fake_meta  # type: ignore[method-assign]
+
+            user = await db.get_user(1077469521)
+
+        self.assertIsNone(user)
+        fake_repo.get_user_snapshot.assert_awaited_once_with(1077469521)

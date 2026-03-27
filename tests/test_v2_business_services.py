@@ -1,7 +1,9 @@
 import asyncio
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from kkbot.services.payment_flow import PaymentFlowService
+from services.payment_flow import _maybe_restore_pending_referrer_for_payment
 from kkbot.services.subscriptions import SubscriptionService
 
 
@@ -37,6 +39,27 @@ class _FakePaymentRepo:
     async def get_intent(self, payment_id: str):
         self.calls.append(("get", {"payment_id": payment_id}))
         return {"payment_id": payment_id, "status": "processing"}
+
+
+class _FakePendingRefDb:
+    def __init__(self) -> None:
+        self.settings = {"ref:pending:42": "794419497"}
+        self.user_payload = {"user_id": 42, "ref_by": 0, "ref_rewarded": 0}
+        self.set_ref_by_calls = []
+
+    async def get_setting(self, key: str, default: str | None = None):
+        return self.settings.get(key, default)
+
+    async def set_setting(self, key: str, value: str):
+        self.settings[key] = value
+
+    async def set_ref_by(self, user_id: int, ref_by: int):
+        self.user_payload["ref_by"] = ref_by
+        self.set_ref_by_calls.append((user_id, ref_by))
+        return True
+
+    async def get_user(self, user_id: int):
+        return dict(self.user_payload)
 
 
 class V2BusinessServiceTests(unittest.TestCase):
@@ -80,3 +103,20 @@ class V2BusinessServiceTests(unittest.TestCase):
 
         payment = asyncio.run(service.get_payment("pay-1"))
         self.assertEqual(payment["payment_id"], "pay-1")
+
+    def test_payment_flow_restores_pending_referrer_from_runtime_settings(self) -> None:
+        db = _FakePendingRefDb()
+
+        with patch("services.payment_flow.evaluate_referral_link", new=AsyncMock(return_value=(True, "ok"))):
+            restored = asyncio.run(
+                _maybe_restore_pending_referrer_for_payment(
+                    user_id=42,
+                    user_data={"user_id": 42, "ref_by": 0, "ref_rewarded": 0},
+                    db=db,
+                    bot=None,
+                )
+            )
+
+        self.assertEqual(restored["ref_by"], 794419497)
+        self.assertEqual(db.set_ref_by_calls, [(42, 794419497)])
+        self.assertEqual(db.settings["ref:pending:42"], "")

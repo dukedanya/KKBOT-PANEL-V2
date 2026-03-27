@@ -9,6 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
+from app.runtime_settings import REF_SETTING_KEYS, STARS_MULTIPLIER_SETTING_KEY
 from config import Config
 from db import Database
 from keyboards import main_menu_keyboard, admin_menu_keyboard
@@ -27,14 +28,6 @@ from utils.templates import (
 
 logger = logging.getLogger(__name__)
 router = Router()
-STARS_MULTIPLIER_SETTING_KEY = "system:telegram_stars_price_multiplier"
-REF_SETTING_KEYS = {
-    "REF_BONUS_DAYS": "system:ref_bonus_days",
-    "REF_PERCENT_LEVEL1": "system:ref_percent_level1",
-    "REF_PERCENT_LEVEL2": "system:ref_percent_level2",
-    "REF_PERCENT_LEVEL3": "system:ref_percent_level3",
-    "MIN_WITHDRAW": "system:min_withdraw",
-}
 
 
 class TariffEditFSM(StatesGroup):

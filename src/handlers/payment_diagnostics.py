@@ -38,6 +38,7 @@ class PaymentDiagnosticsFSM(StatesGroup):
     waiting_user_id = State()
     waiting_support_blacklist = State()
     waiting_user_balance_adjustment = State()
+    waiting_user_partner_rates = State()
     waiting_inbound_count = State()
     waiting_inbound_ids = State()
     waiting_user_grant_custom_days = State()
@@ -882,6 +883,94 @@ async def _build_user_timeline_text(db: Database, user_id: int) -> str:
     )
 
 
+async def _build_user_referral_menu_text(db: Database, user_id: int) -> str:
+    user = await db.get_user(user_id) or {}
+    summary = await db.get_referral_summary(user_id) if hasattr(db, "get_referral_summary") else {}
+    partner = await db.get_partner_settings(user_id) if hasattr(db, "get_partner_settings") else {}
+    custom_l1 = partner.get("custom_percent_level1")
+    custom_l2 = partner.get("custom_percent_level2")
+    custom_l3 = partner.get("custom_percent_level3")
+    return (
+        "🤝 <b>Реферальное меню пользователя</b>\n\n"
+        f"Пользователь: <code>{user_id}</code>\n"
+        f"Имя: <code>{escape(' | '.join(part for part in [('@' + str(user.get('username') or '').strip()) if str(user.get('username') or '').strip() else '', str(user.get('first_name') or '').strip()] if part) or '—')}</code>\n\n"
+        f"👥 Всего рефералов: <b>{int(summary.get('total_refs', 0) or 0)}</b>\n"
+        f"💸 Оплативших: <b>{int(summary.get('paid_refs', 0) or 0)}</b>\n"
+        f"💰 Заработано: <b>{float(summary.get('earned_rub', 0.0) or 0.0):.2f} ₽</b>\n"
+        f"🏷 Статус партнёра: <b>{partner.get('status') or 'standard'}</b>\n"
+        f"📝 Заметка: <code>{_trim_text(str(partner.get('note') or '-'), 80)}</code>\n\n"
+        "<b>Специальные условия</b>\n"
+        f"1️⃣ Уровень 1: <b>{custom_l1 if custom_l1 is not None else 'стандарт'}</b>\n"
+        f"2️⃣ Уровень 2: <b>{custom_l2 if custom_l2 is not None else 'стандарт'}</b>\n"
+        f"3️⃣ Уровень 3: <b>{custom_l3 if custom_l3 is not None else 'стандарт'}</b>"
+    )
+
+
+async def _build_user_referrals_list_text(db: Database, user_id: int) -> str:
+    rows = await db.get_referrals_list(user_id) if hasattr(db, "get_referrals_list") else []
+    lines = []
+    for row in rows[:20]:
+        paid = "✅ оплатил" if int(row.get("ref_rewarded") or 0) == 1 else "⏳ не оплатил"
+        lines.append(
+            f"• <code>{row.get('user_id')}</code> — {paid}"
+            + (f" — <code>{row.get('join_date')}</code>" if row.get("join_date") else "")
+        )
+    body = "\n".join(lines) if lines else "—"
+    return (
+        "👥 <b>Рефералы пользователя</b>\n\n"
+        f"Пользователь: <code>{user_id}</code>\n\n"
+        f"{body}"
+    )
+
+
+async def _build_user_referrals_history_text(db: Database, user_id: int) -> str:
+    rows = await db.get_ref_history(user_id, limit=20) if hasattr(db, "get_ref_history") else []
+    lines = []
+    for row in rows[:20]:
+        amount = float(row.get("amount") or 0.0)
+        bonus_days = int(row.get("bonus_days") or 0)
+        parts = []
+        if amount > 0:
+            parts.append(f"{amount:.2f} ₽")
+        if bonus_days > 0:
+            parts.append(f"{bonus_days} дн")
+        details = " + ".join(parts) if parts else "без суммы"
+        lines.append(
+            f"• <code>{row.get('created_at') or '-'}</code> — user <code>{row.get('ref_user_id') or 0}</code> — <b>{details}</b>"
+        )
+    body = "\n".join(lines) if lines else "—"
+    return (
+        "💸 <b>История начислений</b>\n\n"
+        f"Пользователь: <code>{user_id}</code>\n\n"
+        f"{body}"
+    )
+
+
+async def _build_user_partner_rates_prompt_text(db: Database, user_id: int) -> str:
+    partner = await db.get_partner_settings(user_id) if hasattr(db, "get_partner_settings") else {}
+    l1 = partner.get("custom_percent_level1")
+    l2 = partner.get("custom_percent_level2")
+    l3 = partner.get("custom_percent_level3")
+    status = partner.get("status") or "standard"
+    note = partner.get("note") or ""
+    return (
+        "🎯 <b>Специальные условия партнёра</b>\n\n"
+        f"Пользователь: <code>{user_id}</code>\n\n"
+        "Отправьте строку в формате:\n"
+        "<code>level1 level2 level3 status note</code>\n\n"
+        "Пример:\n"
+        "<code>30 12 7 vip Сильный партнёр</code>\n\n"
+        "Вместо процента можно указать <code>-</code>, чтобы вернуть стандарт.\n"
+        "status: <code>standard / partner / vip / ambassador</code>\n\n"
+        f"Сейчас:\n"
+        f"1️⃣ <b>{l1 if l1 is not None else 'стандарт'}</b>\n"
+        f"2️⃣ <b>{l2 if l2 is not None else 'стандарт'}</b>\n"
+        f"3️⃣ <b>{l3 if l3 is not None else 'стандарт'}</b>\n"
+        f"🏷 <b>{status}</b>\n"
+        f"📝 <code>{_trim_text(str(note or '-'), 80)}</code>"
+    )
+
+
 async def _notify_support_restriction_admins(db: Database, bot: Bot, text: str) -> None:
     enabled = await db.support_restriction_notifications_enabled() if hasattr(db, "support_restriction_notifications_enabled") else True
     if not enabled:
@@ -1099,6 +1188,7 @@ def _user_card_keyboard(user_id: int, *, banned: bool = False, support_blocked: 
                 InlineKeyboardButton(text="🕓 История", callback_data=f"admin:usercard:timeline:{user_id}"),
                 InlineKeyboardButton(text="📜 Тикеты", callback_data=f"admin:usercard:tickets:{user_id}"),
             ],
+            [InlineKeyboardButton(text="🤝 Реферальное меню", callback_data=f"admin:usercard:referral_menu:{user_id}")],
             [
                 InlineKeyboardButton(text="⏫ Продлить тариф", callback_data=f"admin:usercard:extend_tariff:{user_id}"),
                 InlineKeyboardButton(text="🎁 Выдать тариф", callback_data=f"admin:usercard:grant_tariff:{user_id}"),
@@ -1139,6 +1229,22 @@ def _user_card_support_keyboard(user_id: int, *, support_blocked: bool) -> Inlin
         ])
     rows.append([InlineKeyboardButton(text="⬅️ К карточке", callback_data=f"admin:usercard:{user_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _user_card_referral_menu_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="👥 Рефералы", callback_data=f"admin:usercard:referrals_list:{user_id}"),
+                InlineKeyboardButton(text="💸 Начисления", callback_data=f"admin:usercard:referrals_history:{user_id}"),
+            ],
+            [
+                InlineKeyboardButton(text="🎯 Спецусловия", callback_data=f"admin:usercard:partner_rates:{user_id}"),
+                InlineKeyboardButton(text="💰 Корректировка баланса", callback_data=f"admin:usercard:balance_prompt:{user_id}"),
+            ],
+            [InlineKeyboardButton(text="⬅️ К карточке", callback_data=f"admin:usercard:{user_id}")],
+        ]
+    )
 
 
 def _user_card_grant_tariff_keyboard(user_id: int) -> InlineKeyboardMarkup:
@@ -2517,6 +2623,73 @@ async def admin_user_card_reset_trial(callback: CallbackQuery, db: Database):
     await callback.answer("Пробный период сброшен")
 
 
+@router.callback_query(F.data.startswith("admin:usercard:referral_menu:"))
+async def admin_user_card_referral_menu(callback: CallbackQuery, db: Database):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Недостаточно прав", show_alert=True)
+        return
+    user_id = int(callback.data.split(":")[-1])
+    text = await _build_user_referral_menu_text(db, user_id)
+    await smart_edit_message(
+        callback.message,
+        text,
+        parse_mode="HTML",
+        reply_markup=_user_card_referral_menu_keyboard(user_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:usercard:referrals_list:"))
+async def admin_user_card_referrals_list(callback: CallbackQuery, db: Database):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Недостаточно прав", show_alert=True)
+        return
+    user_id = int(callback.data.split(":")[-1])
+    text = await _build_user_referrals_list_text(db, user_id)
+    await smart_edit_message(
+        callback.message,
+        text,
+        parse_mode="HTML",
+        reply_markup=_user_card_referral_menu_keyboard(user_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:usercard:referrals_history:"))
+async def admin_user_card_referrals_history(callback: CallbackQuery, db: Database):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Недостаточно прав", show_alert=True)
+        return
+    user_id = int(callback.data.split(":")[-1])
+    text = await _build_user_referrals_history_text(db, user_id)
+    await smart_edit_message(
+        callback.message,
+        text,
+        parse_mode="HTML",
+        reply_markup=_user_card_referral_menu_keyboard(user_id),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin:usercard:partner_rates:"))
+async def admin_user_card_partner_rates_prompt(callback: CallbackQuery, state: FSMContext, db: Database):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Недостаточно прав", show_alert=True)
+        return
+    user_id = int(callback.data.split(":")[-1])
+    await state.set_state(PaymentDiagnosticsFSM.waiting_user_partner_rates)
+    await state.update_data(target_user_id=user_id)
+    await smart_edit_message(
+        callback.message,
+        await _build_user_partner_rates_prompt_text(db, user_id),
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="⬅️ К реферальному меню", callback_data=f"admin:usercard:referral_menu:{user_id}")]]
+        ),
+    )
+    await callback.answer()
+
+
 @router.message(PaymentDiagnosticsFSM.waiting_user_balance_adjustment)
 async def admin_user_card_balance_save(message: Message, state: FSMContext, db: Database):
     if not is_admin(message.from_user.id):
@@ -2547,6 +2720,54 @@ async def admin_user_card_balance_save(message: Message, state: FSMContext, db: 
             banned=bool((user or {}).get("banned")),
             support_blocked=bool(restriction.get("active")),
         ),
+    )
+
+
+@router.message(PaymentDiagnosticsFSM.waiting_user_partner_rates)
+async def admin_user_card_partner_rates_save(message: Message, state: FSMContext, db: Database):
+    if not is_admin(message.from_user.id):
+        return
+    data = await state.get_data()
+    user_id = int(data.get("target_user_id") or 0)
+    raw = (message.text or "").strip()
+    parts = raw.split(maxsplit=4)
+    if user_id <= 0 or len(parts) < 4:
+        await message.answer(
+            "❌ Отправьте строку в формате:\n<code>level1 level2 level3 status note</code>",
+            parse_mode="HTML",
+        )
+        return
+    try:
+        def _optional_percent(value: str):
+            value = (value or "").strip()
+            if value in {"", "-", "none", "null"}:
+                return None
+            return float(value.replace(",", "."))
+
+        l1 = _optional_percent(parts[0])
+        l2 = _optional_percent(parts[1])
+        l3 = _optional_percent(parts[2])
+    except Exception:
+        await message.answer("❌ Проценты должны быть числами или <code>-</code>.", parse_mode="HTML")
+        return
+    status = parts[3].strip().lower()
+    note = parts[4].strip() if len(parts) > 4 else ""
+    if status not in {"standard", "partner", "vip", "ambassador"}:
+        await message.answer("❌ Статус: <code>standard / partner / vip / ambassador</code>.", parse_mode="HTML")
+        return
+    await db.set_partner_rates(user_id, l1, l2, l3, status=status, note=note)
+    if hasattr(db, "add_admin_user_action"):
+        await db.add_admin_user_action(
+            user_id,
+            message.from_user.id,
+            "partner_rates_update",
+            f"l1={l1};l2={l2};l3={l3};status={status};note={note}",
+        )
+    await state.clear()
+    await message.answer(
+        "✅ Специальные условия обновлены.\n\n" + await _build_user_referral_menu_text(db, user_id),
+        parse_mode="HTML",
+        reply_markup=_user_card_referral_menu_keyboard(user_id),
     )
 
 
