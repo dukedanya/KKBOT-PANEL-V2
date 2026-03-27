@@ -271,7 +271,7 @@ class PaymentRepository:
                         processed_at = NULL,
                         processing_started_at = NULL,
                         next_retry_at = CASE
-                            WHEN $3 > 0 THEN NOW() + ($3 || ' seconds')::interval
+                            WHEN $3 > 0 THEN NOW() + make_interval(secs => $3::int)
                             ELSE NULL
                         END,
                         last_error = COALESCE($2, last_error),

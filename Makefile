@@ -1,6 +1,6 @@
-PYTHON ?= python3
+PYTHON ?= $(shell if [ -x ./venv/bin/python ]; then echo ./venv/bin/python; else echo python3; fi)
 
-.PHONY: install dev run test doctor migrate-legacy
+.PHONY: install dev run test doctor self-check migrate-legacy
 
 install:
 	$(PYTHON) -m pip install -e .
@@ -16,6 +16,9 @@ test:
 
 doctor:
 	cd go && go run ./cmd/kkbotctl doctor
+
+self-check:
+	PYTHONPATH=src $(PYTHON) -m kkbot.tools.self_check
 
 migrate-legacy:
 	PYTHONPATH=src $(PYTHON) -m kkbot.tools.migrate_legacy

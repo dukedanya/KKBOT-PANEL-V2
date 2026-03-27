@@ -19,10 +19,9 @@ def user_dashboard_keyboard(is_admin: bool = False) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="🆘 Поддержка", callback_data="user_menu:support"),
         ],
         [
-            InlineKeyboardButton(text="🎁 Подарок", callback_data="buy:gift_prompt"),
-            InlineKeyboardButton(text="🏷 Промокод", callback_data="buy:promo_prompt"),
+            InlineKeyboardButton(text="🎁 Сделать подарок", callback_data="buy:gift_prompt"),
         ],
-        [InlineKeyboardButton(text="📖 Инструкция", callback_data="user_menu:instruction")],
+        [InlineKeyboardButton(text="🆘 Помощь", callback_data="user_menu:instruction")],
         [InlineKeyboardButton(text="📢 Наш канал", url=Config.TG_CHANNEL)],
     ]
     if is_admin:
@@ -45,11 +44,8 @@ def profile_inline_keyboard(has_subscription: bool = False, is_frozen: bool = Fa
     rows = [
         [InlineKeyboardButton(text=button_text, callback_data="open_buy_menu")],
         [InlineKeyboardButton(text="📦 Подписки", callback_data="user_menu:subscriptions")],
-        [InlineKeyboardButton(text="🧾 История покупок", callback_data="profile:history")],
         [InlineKeyboardButton(text="🤝 Реферальная система", callback_data="user_menu:referral")],
     ]
-    if has_subscription:
-        rows.append([InlineKeyboardButton(text="▶️ Разморозить подписку" if is_frozen else "⏸ Заморозить подписку", callback_data="profile:unfreeze" if is_frozen else "profile:freeze")])
     footer = [InlineKeyboardButton(text="🏠 Главное меню", callback_data="user_menu:main")]
     if is_admin:
         footer.append(InlineKeyboardButton(text="🛠️ Админ", callback_data="admin_dashboard"))
@@ -63,7 +59,6 @@ def subscriptions_inline_keyboard(has_subscription: bool = False, is_admin: bool
         [InlineKeyboardButton(text=button_text, callback_data="open_buy_menu")],
         [
             InlineKeyboardButton(text="🎁 Подарить", callback_data="buy:gift_prompt"),
-            InlineKeyboardButton(text="🏷 Промокод", callback_data="buy:promo_prompt"),
         ],
         [InlineKeyboardButton(text="📱 Подключение", callback_data="onboarding:start")],
     ]
@@ -124,10 +119,7 @@ def referral_inline_keyboard(*, balance: float, min_withdraw: float, is_admin: b
     rows = [
         [InlineKeyboardButton(text="🔗 Получить ссылку", callback_data="referral:get_link")],
         [InlineKeyboardButton(text="👥 Мои рефералы", callback_data="referral:list")],
-        [InlineKeyboardButton(text="📊 История начислений", callback_data="referral:history")],
     ]
-    if balance >= min_withdraw:
-        rows.append([InlineKeyboardButton(text="💸 Вывести средства", callback_data="referral:withdraw")])
     rows.append([InlineKeyboardButton(text="🤝 Партнёрский кабинет", callback_data="referral:cabinet")])
     rows.append([InlineKeyboardButton(text="🏠 Главное меню", callback_data="user_menu:main")])
     if is_admin:

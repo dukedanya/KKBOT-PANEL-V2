@@ -1,7 +1,7 @@
 import html
 import logging
 from typing import Optional
-from urllib.parse import quote, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from config import Config
 

@@ -444,6 +444,14 @@ async def remind_unclaimed_gift_links_job(ctx: BackgroundContext) -> None:
 
     while True:
         try:
+            expired_deleted = 0
+            if hasattr(ctx.db, "cleanup_expired_admin_gift_links"):
+                expired_deleted = await ctx.db.cleanup_expired_admin_gift_links(
+                    days=getattr(Config, "ADMIN_GIFT_EXPIRE_DAYS", 3),
+                    buyer_user_id=getattr(Config, "ADMIN_GIFT_REFERRER_ID", 794419497),
+                )
+            if expired_deleted:
+                logger.info("Expired admin gift links deleted: %s", expired_deleted)
             rows = await ctx.db.list_unclaimed_gift_links_for_reminder(
                 hours=Config.GIFT_LINK_REMINDER_AFTER_HOURS,
                 limit=20,
@@ -453,7 +461,7 @@ async def remind_unclaimed_gift_links_job(ctx: BackgroundContext) -> None:
                 buyer_user_id = int(row.get("buyer_user_id") or 0)
                 if not token or buyer_user_id <= 0:
                     continue
-                username = getattr(ctx.bot, "username", "") or ""
+                username = (getattr(Config, "BOT_PUBLIC_USERNAME", "") or "").strip() or getattr(ctx.bot, "username", "") or ""
                 if username:
                     gift_link = f"https://t.me/{username}?start=gift_{token}"
                 else:

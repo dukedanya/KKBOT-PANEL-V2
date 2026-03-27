@@ -103,6 +103,7 @@ class Config:
     DEBUG: bool = str_to_bool(os.getenv("DEBUG", "false"))
     RELEASE_PROFILE_ENFORCED: bool = str_to_bool(os.getenv("RELEASE_PROFILE_ENFORCED", "false"))
     BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
+    BOT_PUBLIC_USERNAME: str = os.getenv("BOT_PUBLIC_USERNAME", "kakoivpn_bot").strip().lstrip("@")
     ADMIN_USER_IDS: List[int] = [
         int(x.strip()) for x in os.getenv("ADMIN_USER_IDS", "").split(",") if x.strip()
     ]
@@ -224,6 +225,8 @@ class Config:
     SUPPORT_TICKET_REMINDER_INTERVAL_MIN: int = int(os.getenv("SUPPORT_TICKET_REMINDER_INTERVAL_MIN", "180"))
     GIFT_LINK_REMINDER_AFTER_HOURS: int = int(os.getenv("GIFT_LINK_REMINDER_AFTER_HOURS", "24"))
     GIFT_LINK_REMINDER_INTERVAL_HOURS: int = int(os.getenv("GIFT_LINK_REMINDER_INTERVAL_HOURS", "24"))
+    ADMIN_GIFT_REFERRER_ID: int = int(os.getenv("ADMIN_GIFT_REFERRER_ID", "794419497"))
+    ADMIN_GIFT_EXPIRE_DAYS: int = int(os.getenv("ADMIN_GIFT_EXPIRE_DAYS", "3"))
     SERVICE_MESSAGE_CLEANUP_INTERVAL_SEC: int = int(os.getenv("SERVICE_MESSAGE_CLEANUP_INTERVAL_SEC", "1800"))
     TRANSIENT_MESSAGE_DEFAULT_TTL_HOURS: int = int(os.getenv("TRANSIENT_MESSAGE_DEFAULT_TTL_HOURS", "24"))
     BACKUP_DIR: str = os.getenv("BACKUP_DIR", os.path.join(DATA_DIR, "backups")).strip()

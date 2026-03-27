@@ -28,6 +28,16 @@ class MetaRepository:
     async def get_legacy_payload(self, namespace: str, key: str) -> dict[str, Any] | None:
         return await self.db.get_meta(f"{namespace}:{key}")
 
+    async def delete_legacy_payload(self, namespace: str, key: str) -> None:
+        async with self.db.pool.acquire() as conn:  # type: ignore[union-attr]
+            await conn.execute(
+                """
+                DELETE FROM app_meta
+                WHERE key = $1
+                """,
+                f"{namespace}:{key}",
+            )
+
     async def list_legacy_settings(self, prefix: str) -> list[tuple[str, dict[str, Any]]]:
         async with self.db.pool.acquire() as conn:  # type: ignore[union-attr]
             rows = await conn.fetch(

@@ -125,7 +125,7 @@ async def build_referral_screen(user_id: int, *, db: Database, panel: PanelAPI, 
         f"• 3 уровень: <b>{_format_percent(rate_l3)}%</b>\n"
         f"Источник ставок: <b>{source_label}</b>\n\n"
         f"Ваш друг при первой покупке получает <b>скидку {int(Config.REF_FIRST_PAYMENT_DISCOUNT_PERCENT)}%</b> и <b>+{Config.REFERRED_BONUS_DAYS} дней</b> к тарифу. Это действует только на <b>первую оплату</b>.\n\n"
-        f"🔗 Ваша ссылка:\n<code>{link}</code>\n\n"
+        f"🔗 Ваша ссылка:\n<blockquote>{link}</blockquote>\n\n"
         f"Всего приглашено: <b>{total_refs}</b>\n"
         f"Оплатили подписку: <b>{paid_refs}</b>\n"
         f"Конверсия: <b>{conversion:.1f}%</b>\n"
@@ -284,7 +284,6 @@ async def referral_partner_cabinet(callback: CallbackQuery, db: Database):
         f"Доступно к выводу: <b>{summary.get('balance', 0.0):.2f} ₽</b>\n"
         f"Индивидуальные условия: <b>{custom_text}</b>\n"
         "\n\nЧто можно делать из кабинета:\n"
-        "• смотреть историю начислений\n"
         "• смотреть историю выводов\n"
         "• быстро брать свою реферальную ссылку\n"
         "• подавать запрос на вывод при нужном балансе"
@@ -293,13 +292,13 @@ async def referral_partner_cabinet(callback: CallbackQuery, db: Database):
         text += f"\n📝 Заметка администратора: <i>{summary.get('note')}</i>"
     if summary.get('suspicious'):
         text += "\n⚠️ По аккаунту есть флаг проверки администратора."
-    markup = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🔗 Моя ссылка", callback_data="referral:get_link")],
-            [InlineKeyboardButton(text="📊 История начислений", callback_data="referral:history")],
-            [InlineKeyboardButton(text="🧾 История выводов", callback_data="referral:withdraw_history")],
-            [InlineKeyboardButton(text="⬅️ К реферальной системе", callback_data="user_menu:referral")],
-        ]
-    )
+    rows = [
+        [InlineKeyboardButton(text="🔗 Моя ссылка", callback_data="referral:get_link")],
+        [InlineKeyboardButton(text="🧾 История выводов", callback_data="referral:withdraw_history")],
+    ]
+    if float(summary.get("balance", 0.0) or 0.0) >= float(Config.MIN_WITHDRAW):
+        rows.append([InlineKeyboardButton(text="💸 Вывести средства", callback_data="referral:withdraw")])
+    rows.append([InlineKeyboardButton(text="⬅️ К реферальной системе", callback_data="user_menu:referral")])
+    markup = InlineKeyboardMarkup(inline_keyboard=rows)
     await smart_edit_message(callback.message, text, parse_mode='HTML', reply_markup=markup)
     await callback.answer()

@@ -23,12 +23,63 @@ from utils.templates import render_template
 logger = logging.getLogger(__name__)
 
 
+def _pending_ref_key(user_id: int) -> str:
+    return f"ref:pending:{int(user_id)}"
+
+
 async def _call_db_method(db, method_name: str, *args, **kwargs):
     method = getattr(db, method_name)
     try:
         return await method(*args, **kwargs)
     except TypeError:
         return await method(*args)
+
+
+async def _maybe_restore_pending_referrer_for_payment(
+    *,
+    user_id: int,
+    user_data: Optional[Dict[str, Any]],
+    db: Database,
+    bot=None,
+) -> Optional[Dict[str, Any]]:
+    if (user_data or {}).get("ref_by"):
+        return user_data
+    if not hasattr(db, "get_setting"):
+        return user_data
+
+    raw = str(await db.get_setting(_pending_ref_key(user_id), "") or "").strip()
+    try:
+        referrer_id = int(raw)
+    except Exception:
+        referrer_id = 0
+    if referrer_id <= 0:
+        return user_data
+
+    is_allowed, reason = await evaluate_referral_link(user_id, referrer_id, db=db, bot=bot)
+    if not is_allowed:
+        logger.warning(
+            "pending referral blocked during payment activation user=%s referrer=%s reason=%s",
+            user_id,
+            referrer_id,
+            reason,
+        )
+        return user_data
+
+    try:
+        await db.set_ref_by(user_id, referrer_id)
+        await db.set_setting(_pending_ref_key(user_id), "")
+    except Exception as exc:
+        logger.warning(
+            "pending referral restore failed during payment activation user=%s referrer=%s error=%s",
+            user_id,
+            referrer_id,
+            exc,
+        )
+        return user_data
+
+    restored = await db.get_user(user_id)
+    logger.info("pending referral restored during payment activation user=%s referrer=%s", user_id, referrer_id)
+    return restored or user_data
 
 
 def _compute_retry_delay_sec(attempt: int) -> int:
@@ -54,7 +105,9 @@ def support_inline() -> InlineKeyboardMarkup:
 
 
 def _build_gift_claim_link(*, token: str, bot=None) -> str:
-    username = getattr(bot, "username", "") if bot else ""
+    username = (getattr(Config, "BOT_PUBLIC_USERNAME", "") or "").strip()
+    if not username and bot:
+        username = getattr(bot, "username", "") or ""
     if username:
         return f"https://t.me/{username}?start=gift_{token}"
     return f"https://t.me/?start=gift_{token}"
@@ -167,6 +220,12 @@ async def process_successful_payment(
         }
 
     user_data = await db.get_user(recipient_user_id)
+    user_data = await _maybe_restore_pending_referrer_for_payment(
+        user_id=recipient_user_id,
+        user_data=user_data,
+        db=db,
+        bot=bot,
+    )
     bonus_days_for_user = 0
     carried_days = 0
     pending_bonus_days = 0

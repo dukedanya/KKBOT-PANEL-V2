@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import secrets
 import string
@@ -24,6 +25,32 @@ logger = logging.getLogger(__name__)
 def generate_ref_code() -> str:
     alphabet = string.ascii_uppercase + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(8))
+
+
+def _coerce_payload_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return {}
+        if isinstance(parsed, dict):
+            return dict(parsed)
+    return {}
+
+
+def _parse_utc_iso_dt(raw: Any) -> datetime | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except Exception:
+        return None
 
 
 class Database:
@@ -176,10 +203,9 @@ class Database:
         result: list[dict[str, Any]] = []
         for row in rows:
             value = row["value"]
-            if isinstance(value, dict):
-                result.append(dict(value))
-            elif value:
-                result.append(dict(value))
+            payload = _coerce_payload_dict(value)
+            if payload:
+                result.append(payload)
         return result
 
     async def _subscription_row_to_user_payload(self, user_id: int, row: dict[str, Any] | None) -> dict[str, Any]:
@@ -249,29 +275,72 @@ class Database:
             payload = await self.legacy.get_user(user_id)
             if payload is not None:
                 return payload
-        meta = self._meta_repo()
-        if meta is not None:
-            stored = await meta.get_legacy_payload("legacy_user", str(user_id))
-            if stored:
-                return stored
         repo = self._user_repo()
         if repo is None:
             return None
         snapshot = await repo.get_user_snapshot(user_id)
         if not snapshot:
             return None
-        subscription = snapshot.get("subscription") or {}
-        return {
-            "user_id": int(snapshot["user_id"]),
-            "username": snapshot.get("username") or "",
-            "first_name": snapshot.get("first_name") or "",
-            "last_name": snapshot.get("last_name") or "",
-            "language_code": snapshot.get("language_code") or "",
-            "has_subscription": 1 if subscription and subscription.get("status") in {"active", "grace"} else 0,
-            "banned": 0,
-            "plan_text": subscription.get("plan_code") or "",
-            "vpn_url": ((subscription.get("meta") or {}).get("vpn_url") if isinstance(subscription, dict) else "") or "",
-        }
+        meta = self._meta_repo()
+        stored: dict[str, Any] = {}
+        if meta is not None:
+            legacy_payload = await meta.get_legacy_payload("legacy_user", str(user_id))
+            if isinstance(legacy_payload, dict):
+                stored = dict(legacy_payload)
+        raw_subscription = snapshot.get("subscription")
+        subscription = raw_subscription if isinstance(raw_subscription, dict) else {}
+        subscription_meta = subscription.get("meta") if isinstance(subscription.get("meta"), dict) else {}
+        result = dict(stored)
+        result.update(
+            {
+                "user_id": int(snapshot["user_id"]),
+                "username": snapshot.get("username") or result.get("username") or "",
+                "first_name": snapshot.get("first_name") or result.get("first_name") or "",
+                "last_name": snapshot.get("last_name") or result.get("last_name") or "",
+                "language_code": snapshot.get("language_code") or result.get("language_code") or "",
+                "has_subscription": 1 if subscription and subscription.get("status") in {"active", "grace"} else 0,
+                "banned": int(result.get("banned") or 0),
+                "plan_text": subscription.get("plan_code") or result.get("plan_text") or "",
+                "vpn_url": str(subscription_meta.get("vpn_url") or result.get("vpn_url") or ""),
+            }
+        )
+        return result
+
+    async def get_user_by_username(self, username: str) -> dict[str, Any] | None:
+        clean_username = str(username or "").strip().lstrip("@")
+        if not clean_username:
+            return None
+        repo = self._user_repo()
+        if repo is None:
+            return None
+        snapshot = await repo.get_user_snapshot_by_username(clean_username)
+        if not snapshot:
+            return None
+        user_id = int(snapshot["user_id"])
+        meta = self._meta_repo()
+        stored: dict[str, Any] = {}
+        if meta is not None:
+            legacy_payload = await meta.get_legacy_payload("legacy_user", str(user_id))
+            if isinstance(legacy_payload, dict):
+                stored = dict(legacy_payload)
+        raw_subscription = snapshot.get("subscription")
+        subscription = raw_subscription if isinstance(raw_subscription, dict) else {}
+        subscription_meta = subscription.get("meta") if isinstance(subscription.get("meta"), dict) else {}
+        result = dict(stored)
+        result.update(
+            {
+                "user_id": user_id,
+                "username": snapshot.get("username") or result.get("username") or "",
+                "first_name": snapshot.get("first_name") or result.get("first_name") or "",
+                "last_name": snapshot.get("last_name") or result.get("last_name") or "",
+                "language_code": snapshot.get("language_code") or result.get("language_code") or "",
+                "has_subscription": 1 if subscription and subscription.get("status") in {"active", "grace"} else 0,
+                "banned": int(result.get("banned") or 0),
+                "plan_text": subscription.get("plan_code") or result.get("plan_text") or "",
+                "vpn_url": str(subscription_meta.get("vpn_url") or result.get("vpn_url") or ""),
+            }
+        )
+        return result
 
     async def update_user(self, user_id: int, **kwargs) -> bool:
         if self._sqlite_runtime_enabled:
@@ -472,7 +541,9 @@ class Database:
                     normalized,
                 )
             if row and row["payload"]:
-                return dict(row["payload"])
+                payload = _coerce_payload_dict(row["payload"])
+                if payload:
+                    return payload
         return None
 
     async def get_daily_user_acquisition_report(self, *, days_ago: int = 0) -> dict[str, Any]:
@@ -548,8 +619,10 @@ class Database:
                 accepted_row = await conn.fetchrow(
                     """
                     SELECT
-                        COUNT(DISTINCT h.payment_id) AS subscriptions_bought,
-                        COALESCE(SUM(p.amount) FILTER (WHERE p.provider <> 'balance'), 0) AS gross_revenue
+                        COUNT(DISTINCT h.payment_id) FILTER (WHERE p.provider <> 'balance') AS subscriptions_bought,
+                        COUNT(DISTINCT h.payment_id) FILTER (WHERE p.provider = 'balance') AS internal_balance_subscriptions,
+                        COALESCE(SUM(p.amount) FILTER (WHERE p.provider <> 'balance'), 0) AS gross_revenue,
+                        COALESCE(SUM(p.amount) FILTER (WHERE p.provider = 'balance'), 0) AS internal_balance_spent
                     FROM payment_status_history h
                     JOIN payment_intents p ON p.payment_id = h.payment_id
                     WHERE h.to_status = 'accepted'
@@ -584,25 +657,53 @@ class Database:
                     start_days_ago,
                     end_days_ago,
                 )
+                admin_balance_row = await conn.fetchrow(
+                    """
+                    SELECT COALESCE(
+                        SUM(
+                            CASE
+                                WHEN split_part(details, ' ', 1) ~ '^[+-]?[0-9]+(\\.[0-9]+)?$'
+                                     AND split_part(details, ' ', 1)::numeric > 0
+                                THEN split_part(details, ' ', 1)::numeric
+                                ELSE 0
+                            END
+                        ),
+                        0
+                    ) AS admin_balance_issued
+                    FROM admin_user_actions
+                    WHERE action = 'balance_adjustment'
+                      AND DATE(created_at) BETWEEN
+                          (CURRENT_DATE - ($1::int || ' days')::interval)::date AND
+                          (CURRENT_DATE - ($2::int || ' days')::interval)::date
+                    """,
+                    start_days_ago,
+                    end_days_ago,
+                )
             subscriptions_bought = int((accepted_row["subscriptions_bought"] if accepted_row else 0) or 0)
+            internal_balance_subscriptions = int((accepted_row["internal_balance_subscriptions"] if accepted_row else 0) or 0)
             gross_revenue = float((accepted_row["gross_revenue"] if accepted_row else 0.0) or 0.0)
+            internal_balance_spent = float((accepted_row["internal_balance_spent"] if accepted_row else 0.0) or 0.0)
             refunded_revenue = float((refunded_row["refunded_revenue"] if refunded_row else 0.0) or 0.0)
             referral_cost = float((referral_row["referral_cost"] if referral_row else 0.0) or 0.0)
+            admin_balance_issued = float((admin_balance_row["admin_balance_issued"] if admin_balance_row else 0.0) or 0.0)
             net_revenue = gross_revenue - refunded_revenue
             return {
                 "start_date": (datetime.now(timezone.utc) - timedelta(days=start_days_ago)).date().isoformat(),
                 "end_date": (datetime.now(timezone.utc) - timedelta(days=end_days_ago)).date().isoformat(),
                 "days": days,
                 "subscriptions_bought": subscriptions_bought,
+                "internal_balance_subscriptions": internal_balance_subscriptions,
                 "gross_revenue": gross_revenue,
+                "internal_balance_spent": internal_balance_spent,
                 "refunded_revenue": refunded_revenue,
                 "net_revenue": net_revenue,
                 "referral_cost": referral_cost,
+                "admin_balance_issued": admin_balance_issued,
                 "estimated_profit": net_revenue - referral_cost,
             }
         if self._sqlite_runtime_enabled:
             return await self.legacy.get_period_subscription_sales_report(days=days, end_days_ago=end_days_ago)
-        return {"start_date": "", "end_date": "", "days": days, "subscriptions_bought": 0, "gross_revenue": 0.0, "refunded_revenue": 0.0, "net_revenue": 0.0, "referral_cost": 0.0, "estimated_profit": 0.0}
+        return {"start_date": "", "end_date": "", "days": days, "subscriptions_bought": 0, "internal_balance_subscriptions": 0, "gross_revenue": 0.0, "internal_balance_spent": 0.0, "refunded_revenue": 0.0, "net_revenue": 0.0, "referral_cost": 0.0, "admin_balance_issued": 0.0, "estimated_profit": 0.0}
 
     async def get_total_revenue_summary(self) -> dict[str, Any]:
         if self.postgres is not None and self.postgres.pool is not None:
@@ -610,29 +711,53 @@ class Database:
                 payment_row = await conn.fetchrow(
                     """
                     SELECT
-                        COUNT(*) FILTER (WHERE status = ANY($1::text[])) AS accepted_payments,
+                        COUNT(*) FILTER (WHERE status = ANY($1::text[]) AND provider <> 'balance') AS accepted_payments,
+                        COUNT(*) FILTER (WHERE status = ANY($1::text[]) AND provider = 'balance') AS internal_balance_payments,
                         COALESCE(SUM(CASE WHEN status = ANY($1::text[]) AND provider <> 'balance' THEN amount ELSE 0 END), 0) AS gross_revenue,
+                        COALESCE(SUM(CASE WHEN status = ANY($1::text[]) AND provider = 'balance' THEN amount ELSE 0 END), 0) AS internal_balance_spent,
                         COALESCE(SUM(CASE WHEN status = 'refunded' AND provider <> 'balance' THEN amount ELSE 0 END), 0) AS refunded_revenue
                     FROM payment_intents
                     """,
                     ["accepted", "refunded"],
                 )
                 referral_row = await conn.fetchrow("SELECT COALESCE(SUM(amount), 0) AS referral_cost FROM ref_history")
+                admin_balance_row = await conn.fetchrow(
+                    """
+                    SELECT COALESCE(
+                        SUM(
+                            CASE
+                                WHEN split_part(details, ' ', 1) ~ '^[+-]?[0-9]+(\\.[0-9]+)?$'
+                                     AND split_part(details, ' ', 1)::numeric > 0
+                                THEN split_part(details, ' ', 1)::numeric
+                                ELSE 0
+                            END
+                        ),
+                        0
+                    ) AS admin_balance_issued
+                    FROM admin_user_actions
+                    WHERE action = 'balance_adjustment'
+                    """
+                )
             gross_revenue = float((payment_row["gross_revenue"] if payment_row else 0.0) or 0.0)
+            internal_balance_spent = float((payment_row["internal_balance_spent"] if payment_row else 0.0) or 0.0)
             refunded_revenue = float((payment_row["refunded_revenue"] if payment_row else 0.0) or 0.0)
             referral_cost = float((referral_row["referral_cost"] if referral_row else 0.0) or 0.0)
+            admin_balance_issued = float((admin_balance_row["admin_balance_issued"] if admin_balance_row else 0.0) or 0.0)
             net_revenue = gross_revenue - refunded_revenue
             return {
                 "accepted_payments": int((payment_row["accepted_payments"] if payment_row else 0) or 0),
+                "internal_balance_payments": int((payment_row["internal_balance_payments"] if payment_row else 0) or 0),
                 "gross_revenue": gross_revenue,
+                "internal_balance_spent": internal_balance_spent,
                 "refunded_revenue": refunded_revenue,
                 "net_revenue": net_revenue,
                 "referral_cost": referral_cost,
+                "admin_balance_issued": admin_balance_issued,
                 "estimated_profit": net_revenue - referral_cost,
             }
         if self._sqlite_runtime_enabled:
             return await self.legacy.get_total_revenue_summary()
-        return {"accepted_payments": 0, "gross_revenue": 0.0, "refunded_revenue": 0.0, "net_revenue": 0.0, "referral_cost": 0.0, "estimated_profit": 0.0}
+        return {"accepted_payments": 0, "internal_balance_payments": 0, "gross_revenue": 0.0, "internal_balance_spent": 0.0, "refunded_revenue": 0.0, "net_revenue": 0.0, "referral_cost": 0.0, "admin_balance_issued": 0.0, "estimated_profit": 0.0}
 
     async def get_user_card(self, user_id: int) -> dict[str, Any]:
         if self._sqlite_runtime_enabled:
@@ -884,6 +1009,15 @@ class Database:
     async def delete_user_everywhere(self, user_id: int) -> dict[str, int]:
         stats = await self.legacy.delete_user_everywhere(user_id) if self.legacy is not None else {}
         if self.postgres is not None and self.postgres.pool is not None:
+            deleted_total = int(stats.get("deleted", 0) or 0)
+
+            def _add_count(result: str) -> None:
+                nonlocal deleted_total
+                try:
+                    deleted_total += int(str(result or "").split()[-1])
+                except Exception:
+                    pass
+
             async with self.postgres.pool.acquire() as conn:
                 async with conn.transaction():
                     ticket_ids = await conn.fetch(
@@ -898,41 +1032,80 @@ class Database:
                     ticket_id_values = [int(row["id"]) for row in ticket_ids]
 
                     if ticket_id_values:
-                        await conn.execute("DELETE FROM support_messages WHERE ticket_id = ANY($1::bigint[])", ticket_id_values)
+                        _add_count(await conn.execute("DELETE FROM support_messages WHERE ticket_id = ANY($1::bigint[])", ticket_id_values))
+                    _add_count(await conn.execute("DELETE FROM support_messages WHERE sender_user_id = $1", int(user_id)))
                     if payment_id_values:
-                        await conn.execute("DELETE FROM payment_status_history WHERE payment_id = ANY($1::text[])", payment_id_values)
-                        await conn.execute("DELETE FROM payment_admin_actions WHERE payment_id = ANY($1::text[])", payment_id_values)
-                        await conn.execute("DELETE FROM payment_event_dedup WHERE payment_id = ANY($1::text[])", payment_id_values)
-                        await conn.execute("DELETE FROM legacy_payment_intents_archive WHERE payment_id = ANY($1::text[])", payment_id_values)
+                        _add_count(await conn.execute("DELETE FROM payment_status_history WHERE payment_id = ANY($1::text[])", payment_id_values))
+                        _add_count(await conn.execute("DELETE FROM payment_admin_actions WHERE payment_id = ANY($1::text[])", payment_id_values))
+                        _add_count(await conn.execute("DELETE FROM payment_event_dedup WHERE payment_id = ANY($1::text[])", payment_id_values))
+                        _add_count(await conn.execute("DELETE FROM legacy_payment_intents_archive WHERE payment_id = ANY($1::text[])", payment_id_values))
 
-                    await conn.execute("DELETE FROM support_tickets WHERE user_id = $1", int(user_id))
-                    await conn.execute("DELETE FROM withdraw_requests WHERE user_id = $1", int(user_id))
-                    await conn.execute("DELETE FROM payment_intents WHERE user_id = $1 OR COALESCE(recipient_user_id, 0) = $1", int(user_id))
-                    await conn.execute("DELETE FROM subscriptions WHERE user_id = $1", int(user_id))
-                    await conn.execute("DELETE FROM antifraud_events WHERE user_id = $1", int(user_id))
-                    await conn.execute("DELETE FROM admin_user_actions WHERE user_id = $1 OR admin_user_id = $1", int(user_id))
-                    await conn.execute("DELETE FROM ref_history WHERE user_id = $1 OR ref_user_id = $1", int(user_id))
-                    await conn.execute(
+                    _add_count(await conn.execute("DELETE FROM support_tickets WHERE user_id = $1", int(user_id)))
+                    _add_count(await conn.execute("UPDATE support_tickets SET assigned_admin_id = NULL WHERE assigned_admin_id = $1", int(user_id)))
+                    _add_count(await conn.execute("DELETE FROM withdraw_requests WHERE user_id = $1", int(user_id)))
+                    _add_count(await conn.execute("DELETE FROM payment_intents WHERE user_id = $1 OR COALESCE(recipient_user_id, 0) = $1", int(user_id)))
+                    _add_count(await conn.execute("DELETE FROM subscriptions WHERE user_id = $1", int(user_id)))
+                    _add_count(await conn.execute("DELETE FROM antifraud_events WHERE user_id = $1", int(user_id)))
+                    _add_count(await conn.execute("DELETE FROM admin_user_actions WHERE user_id = $1 OR admin_user_id = $1", int(user_id)))
+                    _add_count(await conn.execute("DELETE FROM payment_admin_actions WHERE admin_user_id = $1", int(user_id)))
+                    _add_count(await conn.execute("DELETE FROM ref_history WHERE user_id = $1 OR ref_user_id = $1", int(user_id)))
+                    _add_count(await conn.execute(
                         "DELETE FROM legacy_support_tickets_archive WHERE COALESCE(NULLIF(payload->>'user_id', ''), '0')::bigint = $1",
                         int(user_id),
-                    )
-                    await conn.execute(
+                    ))
+                    _add_count(await conn.execute(
                         "DELETE FROM legacy_support_messages_archive WHERE COALESCE(NULLIF(payload->>'sender_user_id', ''), '0')::bigint = $1",
                         int(user_id),
-                    )
-                    await conn.execute(
+                    ))
+                    _add_count(await conn.execute(
                         "DELETE FROM legacy_withdraw_requests_archive WHERE COALESCE(NULLIF(payload->>'user_id', ''), '0')::bigint = $1",
                         int(user_id),
-                    )
-                    await conn.execute("DELETE FROM legacy_users_archive WHERE user_id = $1", int(user_id))
-                    await conn.execute("DELETE FROM bot_users WHERE user_id = $1", int(user_id))
-                    await conn.execute("DELETE FROM app_meta WHERE key = ANY($1::text[])", [
-                        f"legacy_setting:promo:active:{int(user_id)}",
-                        f"legacy_setting:support:blocked_until:{int(user_id)}",
-                        f"legacy_setting:support:block_reason:{int(user_id)}",
-                        f"legacy_setting:gift:note:{int(user_id)}",
-                        f"legacy_payload:legacy_user:{int(user_id)}",
-                    ])
+                    ))
+                    _add_count(await conn.execute("DELETE FROM legacy_users_archive WHERE user_id = $1", int(user_id)))
+                    _add_count(await conn.execute("DELETE FROM bot_users WHERE user_id = $1", int(user_id)))
+                    _add_count(await conn.execute(
+                        """
+                        UPDATE legacy_users_archive
+                        SET payload = jsonb_set(
+                            jsonb_set(COALESCE(payload, '{}'::jsonb), '{ref_by}', '0'::jsonb, true),
+                            '{ref_rewarded}',
+                            '0'::jsonb,
+                            true
+                        )
+                        WHERE COALESCE((payload->>'ref_by')::bigint, 0) = $1
+                        """,
+                        int(user_id),
+                    ))
+                    _add_count(await conn.execute(
+                        """
+                        DELETE FROM app_meta
+                        WHERE key = ANY($1::text[])
+                           OR key LIKE ANY($2::text[])
+                           OR (
+                               key LIKE 'gift_link:%'
+                               AND (
+                                   COALESCE(NULLIF(value->>'buyer_user_id', ''), '0')::bigint = $3
+                                   OR COALESCE(NULLIF(value->>'claimed_by_user_id', ''), '0')::bigint = $3
+                                   OR COALESCE(NULLIF(value->>'recipient_user_id', ''), '0')::bigint = $3
+                               )
+                           )
+                        """,
+                        [
+                            f"legacy_setting:promo:active:{int(user_id)}",
+                            f"legacy_setting:support:blocked_until:{int(user_id)}",
+                            f"legacy_setting:support:block_reason:{int(user_id)}",
+                            f"legacy_setting:gift:note:{int(user_id)}",
+                            f"legacy_user:{int(user_id)}",
+                            f"legacy_payload:legacy_user:{int(user_id)}",
+                        ],
+                        [
+                            f"legacy_setting:pending_ref:{int(user_id)}",
+                            f"legacy_setting:%:{int(user_id)}",
+                            f"legacy_payload:%:{int(user_id)}",
+                        ],
+                        int(user_id),
+                    ))
+            stats["deleted"] = deleted_total
         return stats
 
     async def mark_ref_rewarded(self, user_id: int) -> bool:
@@ -2278,7 +2451,7 @@ class Database:
                     SELECT COUNT(*)
                     FROM payment_intents
                     WHERE user_id = $1
-                      AND created_at >= NOW() - ($2 || ' seconds')::interval
+                      AND created_at >= NOW() - make_interval(secs => $2::int)
                     """,
                     int(user_id),
                     int(seconds),
@@ -2479,7 +2652,16 @@ class Database:
             return [row for row in rows if int(row.get("has_subscription") or 0) != 1]
         return await self.get_all_users()
 
-    async def create_gift_link(self, *, token: str, buyer_user_id: int, recipient_user_id: int | None = None, plan_id: str, note: str = "") -> bool:
+    async def create_gift_link(
+        self,
+        *,
+        token: str,
+        buyer_user_id: int,
+        recipient_user_id: int | None = None,
+        plan_id: str,
+        note: str = "",
+        custom_duration_days: int | None = None,
+    ) -> bool:
         meta = self._meta_repo()
         if meta is None:
             return False
@@ -2489,6 +2671,7 @@ class Database:
             "recipient_user_id": int(recipient_user_id or 0) if recipient_user_id else None,
             "plan_id": str(plan_id or ""),
             "note": str(note or ""),
+            "custom_duration_days": int(custom_duration_days or 0) if custom_duration_days else 0,
             "created_at": self._now_iso(),
             "claimed_by_user_id": 0,
             "claimed_at": "",
@@ -2501,7 +2684,21 @@ class Database:
         meta = self._meta_repo()
         if meta is None:
             return None
-        return await meta.get_legacy_payload("gift_link", str(token or "").strip())
+        payload = await meta.get_legacy_payload("gift_link", str(token or "").strip())
+        if not payload:
+            return None
+        buyer_user_id = int(payload.get("buyer_user_id") or 0)
+        claimed_by_user_id = int(payload.get("claimed_by_user_id") or 0)
+        created_at = _parse_utc_iso_dt(payload.get("created_at"))
+        if (
+            buyer_user_id == int(getattr(Config, "ADMIN_GIFT_REFERRER_ID", 794419497))
+            and claimed_by_user_id == 0
+            and created_at is not None
+            and created_at <= datetime.now(timezone.utc) - timedelta(days=int(getattr(Config, "ADMIN_GIFT_EXPIRE_DAYS", 3) or 3))
+        ):
+            await meta.delete_legacy_payload("gift_link", str(token or "").strip())
+            return None
+        return payload
 
     async def claim_gift_link(self, token: str, user_id: int) -> bool:
         gift = await self.get_gift_link(token)
@@ -2532,6 +2729,11 @@ class Database:
         filtered.sort(key=lambda row: str(row.get("created_at") or ""), reverse=True)
         return filtered[: max(1, int(limit))]
 
+    async def list_recent_gift_links(self, limit: int = 20) -> list[dict[str, Any]]:
+        rows = await self._list_namespace_payloads("gift_link")
+        rows.sort(key=lambda row: str(row.get("created_at") or ""), reverse=True)
+        return rows[: max(1, int(limit))]
+
     async def list_recent_claimed_gift_links(self, limit: int = 10) -> list[dict[str, Any]]:
         rows = await self._list_namespace_payloads("gift_link")
         filtered = [row for row in rows if int(row.get("claimed_by_user_id") or 0) > 0]
@@ -2543,6 +2745,28 @@ class Database:
         claimed = sum(1 for row in rows if int(row.get("claimed_by_user_id") or 0) > 0)
         total = len(rows)
         return {"total": total, "claimed": claimed, "unclaimed": max(0, total - claimed)}
+
+    async def cleanup_expired_admin_gift_links(self, *, days: int = 3, buyer_user_id: int = 794419497) -> int:
+        meta = self._meta_repo()
+        if meta is None:
+            return 0
+        rows = await self._list_namespace_payloads("gift_link")
+        threshold = datetime.now(timezone.utc) - timedelta(days=max(1, int(days)))
+        deleted = 0
+        for row in rows:
+            token = str(row.get("token") or "").strip()
+            if not token:
+                continue
+            if int(row.get("buyer_user_id") or 0) != int(buyer_user_id):
+                continue
+            if int(row.get("claimed_by_user_id") or 0) > 0:
+                continue
+            created_at = _parse_utc_iso_dt(row.get("created_at"))
+            if created_at is None or created_at > threshold:
+                continue
+            await meta.delete_legacy_payload("gift_link", token)
+            deleted += 1
+        return deleted
 
     async def get_meta(self, key: str) -> dict[str, Any] | None:
         if self.postgres is None:

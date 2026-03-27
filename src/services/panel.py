@@ -544,7 +544,7 @@ class PanelAPI:
 
         return last_client
 
-    async def delete_client(self, base_email: str) -> bool:
+    async def delete_client_detailed(self, base_email: str) -> dict[str, Any]:
         await self.ensure_auth()
         clients = await self.find_clients_full_by_email(base_email)
 
@@ -552,9 +552,17 @@ class PanelAPI:
             logger.info(
                 f"Клиенты с частью email '{base_email}' не найдены, ничего не удаляем"
             )
-            return True
+            return {
+                "ok": True,
+                "found": 0,
+                "deleted": 0,
+                "already_missing": 0,
+                "errors": [],
+            }
 
         success_count = 0
+        skipped_missing_count = 0
+        errors: list[str] = []
 
         for c in clients:
             inbound_id = c.get("inboundId")
@@ -565,6 +573,7 @@ class PanelAPI:
 
             if not inbound_id:
                 logger.error(f"Пропускаем клиента email={email}: нет inboundId")
+                errors.append(f"{email}: no inboundId")
                 continue
 
             if protocol == "trojan":
@@ -574,6 +583,7 @@ class PanelAPI:
 
             if not delete_id:
                 logger.error(f"Пропускаем клиента email={email}: нет delete_id")
+                errors.append(f"{email}: no delete id")
                 continue
 
             delete_url = (
@@ -582,20 +592,39 @@ class PanelAPI:
             status, data, text = await self._request_json_with_reauth(
                 "POST", delete_url, headers=self._headers()
             )
+            msg = str((data or {}).get("msg") or "").strip()
 
             if status == 200 and data.get("success"):
                 logger.info(
                     f"Клиент email={email} (inboundId={inbound_id}, protocol={protocol}) успешно удалён"
                 )
                 success_count += 1
+            elif status == 200 and "record not found" in msg.lower():
+                logger.info(
+                    "Клиент email=%s inbound=%s уже отсутствует в панели, считаем удалённым",
+                    email,
+                    inbound_id,
+                )
+                skipped_missing_count += 1
             else:
                 logger.error(
-                    f"Ошибка удаления клиента email={email} inbound={inbound_id}: status={status} msg={data.get('msg')}"
+                    f"Ошибка удаления клиента email={email} inbound={inbound_id}: status={status} msg={msg}"
                 )
+                errors.append(f"{email}@{inbound_id}: {msg or f'HTTP {status}'}")
                 if text:
                     logger.error(text)
 
-        return success_count > 0
+        return {
+            "ok": (success_count + skipped_missing_count) > 0 and not errors,
+            "found": len(clients),
+            "deleted": success_count,
+            "already_missing": skipped_missing_count,
+            "errors": errors,
+        }
+
+    async def delete_client(self, base_email: str) -> bool:
+        result = await self.delete_client_detailed(base_email)
+        return bool(result.get("deleted", 0) or result.get("already_missing", 0) or result.get("found", 0) == 0)
 
     async def extend_client_expiry(self, base_email: str, add_days: int) -> bool:
         await self.ensure_auth()

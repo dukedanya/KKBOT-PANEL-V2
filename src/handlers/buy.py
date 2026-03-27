@@ -297,6 +297,41 @@ def format_amount_line(amount: float, duration: int) -> str:
     return f"{amount_display} ₽ / мес." if duration == 30 else f"{amount_display} ₽ / {duration} дн."
 
 
+def _format_offer_price_block(offer: dict, duration: int) -> str:
+    amount = float(offer.get("amount") or 0.0)
+    base_amount = float(offer.get("base_amount") or amount)
+    discounted = amount > 0 and base_amount > amount + 1e-9
+    current_line = format_amount_line(amount, duration)
+    if not discounted:
+        return f"<b>{current_line}</b>"
+    old_line = format_amount_line(base_amount, duration)
+    return f"<s>{old_line}</s>\n<b>{current_line}</b>"
+
+
+def _build_referral_offer_line(offer: dict) -> str:
+    if not bool(offer.get("eligible")):
+        return ""
+    discount_pct = int(float(offer.get("discount_pct") or 0))
+    bonus_days = int(offer.get("bonus_days") or 0)
+    parts = []
+    if discount_pct > 0:
+        parts.append(f"-{discount_pct}%")
+    if bonus_days > 0:
+        parts.append(f"+{bonus_days} дней")
+    if not parts:
+        return ""
+    return f"🤝 Реферальная скидка: <b>{' и '.join(parts)}</b>"
+
+
+def _format_offer_duration_block(offer: dict, duration: int) -> str:
+    bonus_days = int(offer.get("bonus_days") or 0) if bool(offer.get("eligible")) else 0
+    if bonus_days <= 0:
+        return f"<b>{format_duration(duration)}</b>"
+    base_label = format_duration(duration)
+    final_label = format_duration(duration + bonus_days)
+    return f"<s>{base_label}</s>\n<b>{final_label}</b>"
+
+
 def _insufficient_balance_text(*, balance: float, amount: float) -> str:
     return f"❌ Недостаточно средств на балансе. Доступно: {balance:.2f} ₽, нужно: {amount:.2f} ₽."
 
@@ -603,8 +638,9 @@ async def buy_plan(callback: CallbackQuery, db):
 
     duration = int(plan.get("duration_days", 30))
     offer = await get_purchase_offer(user_id, db, plan)
-    amount = offer["amount"]
-    price_line = format_amount_line(amount, duration)
+    price_block = _format_offer_price_block(offer, duration)
+    duration_block = _format_offer_duration_block(offer, duration)
+    referral_line = _build_referral_offer_line(offer)
     banking = [provider for provider in providers if provider in {"itpay", "yookassa"}]
     telegram = [provider for provider in providers if provider == "telegram_stars"]
     provider_lines = []
@@ -627,11 +663,14 @@ async def buy_plan(callback: CallbackQuery, db):
     text = (
         "💳 <b>Выберите способ оплаты</b>\n\n"
         f"📦 Тариф: <b>{plan.get('name', plan_id)}</b>\n"
-        f"💰 Стоимость: <b>{price_line}</b>\n\n"
+        f"💰 Стоимость:\n{price_block}\n\n"
+        f"📅 Срок:\n{duration_block}\n"
         "Оплатить подписку можно несколькими способами:\n"
         f"{provider_lines}\n\n"
         "Выберите удобный способ оплаты ниже."
     )
+    if referral_line:
+        text += f"\n\n{referral_line}"
     promo_line = _promo_offer_line(offer)
     if promo_line:
         text += f"\n\n{promo_line}"
@@ -719,6 +758,17 @@ async def _resolve_payment_gateway(provider_name: str, default_gateway):
     if active_provider == provider_name:
         return default_gateway, False
     return build_payment_gateway(provider_name), True
+
+
+def _resolve_payment_success_url(bot: Bot | None) -> str | None:
+    username = str(getattr(bot, "username", "") or "").strip().lstrip("@")
+    if username:
+        return f"https://t.me/{username}"
+    if Config.YOOKASSA_RETURN_URL:
+        return Config.YOOKASSA_RETURN_URL
+    if Config.TG_CHANNEL:
+        return Config.TG_CHANNEL
+    return None
 
 
 async def _pay_plan_with_balance(
@@ -1011,7 +1061,7 @@ async def _buy_plan_with_provider_locked(callback: CallbackQuery, db, payment_ga
             user_id=user_id,
             plan_id=plan_id,
             description=f"Подписка: {plan_name}",
-            success_url=Config.TG_CHANNEL or None,
+            success_url=_resolve_payment_success_url(bot),
             plan=plan,
         )
         if not gateway_payment:

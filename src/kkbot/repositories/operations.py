@@ -67,8 +67,15 @@ class OperationsRepository:
         async with self.db.pool.acquire() as conn:  # type: ignore[union-attr]
             row = await conn.fetchrow(
                 """
-                INSERT INTO support_tickets(user_id, status, created_at, updated_at, meta)
-                VALUES($1, 'open', NOW(), NOW(), $2::jsonb)
+                INSERT INTO support_tickets(id, user_id, status, created_at, updated_at, meta)
+                VALUES(
+                    COALESCE((SELECT MAX(id) + 1 FROM support_tickets), 1),
+                    $1,
+                    'open',
+                    NOW(),
+                    NOW(),
+                    $2::jsonb
+                )
                 RETURNING id
                 """,
                 user_id,
@@ -107,8 +114,18 @@ class OperationsRepository:
         async with self.db.pool.acquire() as conn:  # type: ignore[union-attr]
             row = await conn.fetchrow(
                 """
-                INSERT INTO support_messages(ticket_id, sender_role, sender_user_id, text, media_type, media_file_id, created_at, meta)
-                VALUES($1, $2, $3, $4, $5, $6, NOW(), $7::jsonb)
+                INSERT INTO support_messages(id, ticket_id, sender_role, sender_user_id, text, media_type, media_file_id, created_at, meta)
+                VALUES(
+                    COALESCE((SELECT MAX(id) + 1 FROM support_messages), 1),
+                    $1,
+                    $2,
+                    $3,
+                    $4,
+                    $5,
+                    $6,
+                    NOW(),
+                    $7::jsonb
+                )
                 RETURNING id
                 """,
                 int(payload.get("ticket_id") or 0),

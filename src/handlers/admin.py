@@ -293,6 +293,7 @@ async def _render_ref_settings(message_obj):
 
 async def _build_ref_audit_text(db: Database) -> str:
     users = await db.get_all_users() if hasattr(db, "get_all_users") else []
+    user_map = {int(row.get("user_id") or 0): row for row in users}
     referred = []
     for row in users:
         ref_by = int(row.get("ref_by") or 0)
@@ -300,10 +301,22 @@ async def _build_ref_audit_text(db: Database) -> str:
             referred.append(row)
     referred.sort(key=lambda item: str(item.get("join_date") or ""), reverse=True)
     gifts = await db.list_recent_claimed_gift_links(limit=10) if hasattr(db, "list_recent_claimed_gift_links") else []
+    suspicious = await db.get_suspicious_referrals(limit=20) if hasattr(db, "get_suspicious_referrals") else []
+    paid_referred = [row for row in referred if int(row.get("ref_rewarded") or 0) == 1]
+    gift_referrals = []
+    for row in gifts:
+        buyer = int(row.get("buyer_user_id") or 0)
+        claimed_by = int(row.get("claimed_by_user_id") or 0)
+        claimed_user = user_map.get(claimed_by) or {}
+        linked = int(claimed_user.get("ref_by") or 0) == buyer and buyer > 0 and claimed_by > 0
+        gift_referrals.append((row, linked))
     lines = [
         "📋 <b>Реферальный аудит</b>",
         "",
         f"Привязанных пользователей: <b>{len(referred)}</b>",
+        f"Оплативших рефералов: <b>{len(paid_referred)}</b>",
+        f"Подозрительных кейсов: <b>{len(suspicious)}</b>",
+        f"Подарков, которые стали рефералкой: <b>{sum(1 for _, linked in gift_referrals if linked)}</b>",
         "",
         "<b>Последние обычные / стартовые привязки</b>",
     ]
@@ -311,22 +324,33 @@ async def _build_ref_audit_text(db: Database) -> str:
         lines.append("• пока нет данных")
     else:
         for row in referred[:12]:
+            paid_label = "оплатил" if int(row.get("ref_rewarded") or 0) == 1 else "ещё не оплатил"
             lines.append(
                 f"• user <code>{row.get('user_id')}</code> ← ref <code>{int(row.get('ref_by') or 0)}</code> "
-                f"• <code>{row.get('join_date') or '-'}</code>"
+                f"• <code>{row.get('join_date') or '-'}</code> • {paid_label}"
             )
     lines.extend(["", "<b>Последние активации подарков</b>"])
-    if not gifts:
+    if not gift_referrals:
         lines.append("• пока нет данных")
     else:
-        for row in gifts[:10]:
+        for row, linked in gift_referrals[:10]:
             buyer = int(row.get("buyer_user_id") or 0)
             claimed_by = int(row.get("claimed_by_user_id") or 0)
             note = str(row.get("note") or "").strip()
             note_suffix = f" — {_trim_text(note, 40)}" if note else ""
+            linked_suffix = " • стал рефералом" if linked else " • без ref-привязки"
             lines.append(
                 f"• buyer <code>{buyer}</code> → user <code>{claimed_by}</code> "
-                f"• <code>{row.get('claimed_at') or row.get('created_at') or '-'}</code>{note_suffix}"
+                f"• <code>{row.get('claimed_at') or row.get('created_at') or '-'}</code>{linked_suffix}{note_suffix}"
+            )
+    lines.extend(["", "<b>Последние подозрительные кейсы</b>"])
+    if not suspicious:
+        lines.append("• нет активных кейсов")
+    else:
+        for row in suspicious[:8]:
+            lines.append(
+                f"• user <code>{row.get('user_id')}</code> ← ref <code>{row.get('ref_by') or 0}</code>"
+                f" — {_trim_text(str(row.get('partner_note') or 'без заметки'), 60)}"
             )
     return "\n".join(lines)
 

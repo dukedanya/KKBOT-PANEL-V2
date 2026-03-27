@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 
 from aiogram import Router, F, Bot
@@ -13,9 +13,11 @@ from keyboards import subscriptions_inline_keyboard, profile_inline_keyboard
 from utils.helpers import replace_message, get_visible_plans
 from kkbot.services.subscriptions import create_subscription, is_active_subscription, get_subscription_status, panel_base_email
 from services.panel import PanelAPI
+from services.payment_gateway import build_payment_gateway, get_provider_label
 from utils.subscription_links import render_connection_info
 from utils.onboarding import onboarding_keyboard, onboarding_text
 from utils.telegram_ui import smart_edit_message
+from utils.payments import get_provider_payment_id
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -23,21 +25,146 @@ router = Router()
 
 def _payment_status_label(status: str) -> str:
     mapping = {
-        "accepted": "оплачен",
-        "pending": "ожидает оплаты",
-        "processing": "обрабатывается",
-        "rejected": "отклонён",
-        "refunded": "возврат",
+        "accepted": "✅ оплачен",
+        "pending": "⏳ ожидает оплаты",
+        "processing": "🔄 обрабатывается",
+        "rejected": "❌ отклонён",
+        "refunded": "↩️ возврат",
+        "cancelled": "❌ отменён",
+        "canceled": "❌ отменён",
+        "waiting_for_capture": "🕓 ждёт подтверждения",
     }
     return mapping.get(str(status or "").strip().lower(), str(status or "неизвестно"))
+
+
+def _format_dt(value) -> str:
+    if not value:
+        return "—"
+    if isinstance(value, str):
+        raw = value.strip().replace("Z", "+00:00")
+        try:
+            value = datetime.fromisoformat(raw)
+        except ValueError:
+            return value
+    if isinstance(value, datetime):
+        return value.strftime("%d.%m.%Y %H:%M")
+    return str(value)
+
+
+def _payment_status_note(status: str) -> str:
+    mapping = {
+        "accepted": "Подписка уже активирована автоматически.",
+        "pending": "Платёж создан, но оплата ещё не завершена.",
+        "processing": "Платёж уже найден. Бот продолжает автоматическую проверку.",
+        "waiting_for_capture": "Платёж получен платёжной системой и ждёт подтверждения.",
+        "rejected": "Платёж не прошёл или был отклонён.",
+        "cancelled": "Платёж отменён.",
+        "canceled": "Платёж отменён.",
+        "refunded": "По этому платежу оформлен возврат.",
+    }
+    return mapping.get(str(status or "").strip().lower(), "Статус платежа обновляется автоматически.")
+
+
+def _provider_label(provider: str) -> str:
+    provider_key = str(provider or "").strip().lower()
+    if provider_key == "balance":
+        return "Баланс"
+    if provider_key == "telegram_stars":
+        return "Telegram Stars"
+    return get_provider_label(provider_key)
+
+
+def _payment_plan_name(payment: dict) -> str:
+    plan_id = str(payment.get("plan_id") or "")
+    plan = get_by_id(plan_id) or {}
+    return str(plan.get("name") or plan_id or "Тариф")
+
+
+def _pick_relevant_payment(payments: list[dict]) -> Optional[dict]:
+    if not payments:
+        return None
+    preferred_statuses = {"pending", "processing", "waiting_for_capture"}
+    for payment in payments:
+        if str(payment.get("status") or "").strip().lower() in preferred_statuses:
+            return payment
+    return payments[0]
+
+
+async def _resolve_payment_checkout_url(payment: dict, payment_gateway) -> str:
+    provider = str(payment.get("provider") or "").strip().lower()
+    if not provider or provider in {"balance", "telegram_stars"}:
+        return ""
+    provider_payment_id = get_provider_payment_id(payment)
+    if not provider_payment_id:
+        return ""
+    gateway = payment_gateway
+    should_close = False
+    if str(getattr(payment_gateway, "provider_name", "") or "").strip().lower() != provider:
+        gateway = build_payment_gateway(provider)
+        should_close = True
+    try:
+        remote_payment = await gateway.get_payment(provider_payment_id)
+        if not remote_payment:
+            return ""
+        return gateway.get_checkout_url(remote_payment)
+    finally:
+        if should_close and hasattr(gateway, "close"):
+            await gateway.close()
+
+
+async def _build_payment_status_text(user_id: int, *, db: Database, payment_gateway) -> tuple[str, InlineKeyboardMarkup]:
+    payments = await db.get_pending_payments_by_user(user_id)
+    payment = _pick_relevant_payment(payments)
+    if not payment:
+        text = (
+            "💳 <b>Статус оплаты</b>\n\n"
+            "У вас пока нет платежей.\n\n"
+            "Когда вы создадите оплату, здесь будет видно её текущий статус и история изменений."
+        )
+        markup = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ В кабинет", callback_data="user_menu:profile")]])
+        return text, markup
+
+    status = str(payment.get("status") or "").strip().lower()
+    history = await db.get_payment_status_history(str(payment.get("payment_id") or ""), limit=5)
+    checkout_url = await _resolve_payment_checkout_url(payment, payment_gateway)
+
+    lines = [
+        "💳 <b>Статус оплаты</b>",
+        "",
+        f"📦 Тариф: <b>{_payment_plan_name(payment)}</b>",
+        f"🧾 ID: <code>{payment.get('payment_id') or '-'}</code>",
+        f"🏦 Способ оплаты: <b>{_provider_label(payment.get('provider') or '')}</b>",
+        f"💰 Сумма: <b>{float(payment.get('amount') or 0):.2f} ₽</b>",
+        f"📍 Статус: <b>{_payment_status_label(status)}</b>",
+        f"🕓 Создан: <b>{_format_dt(payment.get('created_at'))}</b>",
+    ]
+    processed_at = payment.get("processed_at") or payment.get("updated_at")
+    if processed_at:
+        lines.append(f"🧷 Обновлён: <b>{_format_dt(processed_at)}</b>")
+    lines.extend(["", _payment_status_note(status)])
+
+    if history:
+        lines.extend(["", "<b>Последние изменения</b>"])
+        for row in history[:4]:
+            to_status = _payment_status_label(str(row.get("to_status") or ""))
+            source = str(row.get("source") or "").strip()
+            source_suffix = f" • {source}" if source else ""
+            lines.append(f"• {_format_dt(row.get('created_at'))} — {to_status}{source_suffix}")
+
+    buttons: list[list[InlineKeyboardButton]] = []
+    if checkout_url:
+        buttons.append([InlineKeyboardButton(text="💳 Перейти к оплате", url=checkout_url)])
+    if status in {"pending", "processing", "waiting_for_capture"} and str(payment.get("provider") or "").strip().lower() not in {"balance", "telegram_stars"}:
+        buttons.append([InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_payment:{payment['payment_id']}")])
+    buttons.append([InlineKeyboardButton(text="🧾 Вся история", callback_data="profile:history")])
+    buttons.append([InlineKeyboardButton(text="⬅️ В кабинет", callback_data="user_menu:profile")])
+    return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 async def render_profile_text(user_id: int, *, status: dict, panel: PanelAPI, db: Database) -> str:
     active_sub = status["active"]
     user_data = status["user"]
     balance = float(await db.get_balance(user_id))
-    gift_links = await db.get_gift_links_by_buyer(user_id, limit=3) if hasattr(db, "get_gift_links_by_buyer") else []
-    payments = await db.get_pending_payments_by_user(user_id)
 
     summary_lines = [
         "👤 <b>Личный кабинет | Какой-то VPN 🪬</b>",
@@ -64,8 +191,6 @@ async def render_profile_text(user_id: int, *, status: dict, panel: PanelAPI, db
                 f"IP-адреса: <b>до {ip_limit}</b>",
                 f"Срок действия: <b>до {expiry_date}</b>",
                 "",
-                "🔗 <b>Ссылка для подключения:</b>",
-                "",
                 connection_info,
                 "",
                 f"💰 Баланс: <b>{balance:.2f} ₽</b>",
@@ -76,34 +201,11 @@ async def render_profile_text(user_id: int, *, status: dict, panel: PanelAPI, db
                 "📦 <b>Текущая подписка</b>",
                 f"IP-адреса: <b>до {ip_limit}</b>",
                 "",
-                "🔗 <b>Ссылка для подключения:</b>",
-                "",
                 connection_info,
                 "",
                 f"💰 Баланс: <b>{balance:.2f} ₽</b>",
             ]
         text = "\n".join(summary_lines + sub_lines)
-
-    if payments:
-        text += "\n\n🧾 <b>Последние платежи</b>"
-        for payment in payments[:3]:
-            plan_id = str(payment.get("plan_id") or "")
-            plan = get_by_id(plan_id) or {}
-            plan_name = str(plan.get("name") or plan_id or "Тариф")
-            text += (
-                "\n"
-                f"• {plan_name} — <b>{float(payment.get('amount') or 0):.2f} ₽</b> "
-                f"({ _payment_status_label(payment.get('status')) })"
-            )
-
-    if gift_links:
-        text += "\n\n🎁 <b>Последние подарки</b>"
-        for gift in gift_links[:3]:
-            plan = get_by_id(str(gift.get("plan_id") or "")) or {}
-            plan_name = str(plan.get("name") or gift.get("plan_id") or "Тариф")
-            claimed = int(gift.get("claimed_by_user_id") or 0)
-            status_label = f"активирован пользователем {claimed}" if claimed else "ещё не активирован"
-            text += f"\n• {plan_name} — {status_label}"
 
     return text
 
@@ -126,20 +228,33 @@ async def _build_purchase_history_text(user_id: int, db: Database) -> str:
     payments = await db.get_pending_payments_by_user(user_id)
     gifts = await db.get_user_gift_history(user_id, limit=10) if hasattr(db, "get_user_gift_history") else []
     lines = [
-        "🧾 <b>История покупок и подарков</b>",
+        "🧾 <b>История платежей и подарков</b>",
         "",
     ]
-    if payments:
-        lines.append("<b>Платежи</b>")
-        for payment in payments[:10]:
-            plan_id = str(payment.get("plan_id") or "")
-            plan = get_by_id(plan_id) or {}
-            plan_name = str(plan.get("name") or plan_id or "Тариф")
+    open_statuses = {"pending", "processing", "waiting_for_capture"}
+    success_statuses = {"accepted"}
+    failed_statuses = {"rejected", "refunded", "cancelled", "canceled"}
+    open_payments = [row for row in payments if str(row.get("status") or "").strip().lower() in open_statuses]
+    successful_payments = [row for row in payments if str(row.get("status") or "").strip().lower() in success_statuses]
+    failed_payments = [row for row in payments if str(row.get("status") or "").strip().lower() in failed_statuses]
+
+    def _append_payment_section(title: str, rows: list[dict]) -> None:
+        lines.append(f"<b>{title}</b>")
+        if not rows:
+            lines.append("• Нет записей")
+            return
+        for payment in rows[:8]:
             lines.append(
-                f"• {plan_name} — <b>{float(payment.get('amount') or 0):.2f} ₽</b> / {_payment_status_label(payment.get('status'))}"
+                f"• {_format_dt(payment.get('created_at'))} — <b>{_payment_plan_name(payment)}</b>\n"
+                f"  {_payment_status_label(str(payment.get('status') or ''))} • {_provider_label(payment.get('provider') or '')} • {float(payment.get('amount') or 0):.2f} ₽"
             )
-    else:
-        lines.append("Платежей пока нет.")
+
+    _append_payment_section("Незавершённые", open_payments)
+    lines.append("")
+    _append_payment_section("Успешные", successful_payments)
+    lines.append("")
+    _append_payment_section("Неуспешные и возвраты", failed_payments)
+
     if gifts:
         lines.extend(["", "<b>Подарки</b>"])
         for gift in gifts[:10]:
@@ -166,6 +281,18 @@ async def profile_history(callback: CallbackQuery, db: Database):
         callback.message,
         text,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ В кабинет", callback_data="user_menu:profile")]]),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "profile:payment_status")
+async def profile_payment_status(callback: CallbackQuery, db: Database, payment_gateway):
+    text, markup = await _build_payment_status_text(callback.from_user.id, db=db, payment_gateway=payment_gateway)
+    await smart_edit_message(
+        callback.message,
+        text,
+        reply_markup=markup,
         parse_mode="HTML",
     )
     await callback.answer()
@@ -311,9 +438,8 @@ async def build_subscriptions_text(user_id: int, *, status: dict, db: Database) 
         ])
 
     for idx, plan in enumerate(plans, 1):
-        badge = "🔥 Хит" if idx == 1 else "🎯 Выгодно" if idx == 2 else "✨"
         lines.append("")
-        lines.append(f"{idx}. {badge} <b>{plan.get('name')}</b>")
+        lines.append(f"{idx}. <b>{plan.get('name')}</b>")
         description = str(plan.get("description") or "").strip()
         quote_parts = [
             f"💰 {format_price(plan)}",
@@ -339,100 +465,3 @@ async def back_to_subscriptions(callback: CallbackQuery, db: Database, panel: Pa
     text = await build_subscriptions_text(callback.from_user.id, status=status, db=db)
     await smart_edit_message(callback.message, text, reply_markup=subscriptions_inline_keyboard(status["active"], is_admin=callback.from_user.id in Config.ADMIN_USER_IDS), parse_mode="HTML")
     await callback.answer()
-
-
-@router.message(F.text == "⏸ Заморозить подписку")
-@router.callback_query(F.data == "profile:freeze")
-async def freeze_subscription(event, db: Database, panel: PanelAPI):
-    user_id = event.from_user.id
-    status = await get_subscription_status(user_id, db=db, panel=panel)
-    if not status.get("active"):
-        if isinstance(event, CallbackQuery):
-            await event.answer("❌ Заморозка доступна только при активной подписке.", show_alert=True)
-        else:
-            await event.answer("❌ Заморозка доступна только при активной подписке.")
-        return
-    if status.get("is_frozen") and status.get("frozen_until"):
-        until_text = status["frozen_until"].strftime("%d.%m.%Y %H:%M")
-        text = f"❄️ Подписка уже заморожена до <b>{until_text}</b>."
-        if isinstance(event, CallbackQuery):
-            await smart_edit_message(event.message, text, parse_mode="HTML")
-            await event.answer()
-        else:
-            await event.answer(text, parse_mode="HTML")
-        return
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="7 дней", callback_data="freeze:7"), InlineKeyboardButton(text="14 дней", callback_data="freeze:14"), InlineKeyboardButton(text="30 дней", callback_data="freeze:30")],
-        [InlineKeyboardButton(text="⬅️ В кабинет", callback_data="user_menu:profile")],
-    ])
-    text = (
-        "⏸ <b>Заморозка подписки</b>\n\n"
-        "На сколько дней заморозить?\n"
-        "Текущая реализация компенсирует паузу продлением срока подписки и помечает её как замороженную."
-    )
-    if isinstance(event, CallbackQuery):
-        await smart_edit_message(event.message, text, reply_markup=keyboard, parse_mode="HTML")
-        await event.answer()
-    else:
-        await event.answer(text, reply_markup=keyboard, parse_mode="HTML")
-
-
-@router.callback_query(F.data.startswith("freeze:"))
-async def freeze_callback(callback: CallbackQuery, db: Database, panel: PanelAPI):
-    user_id = callback.from_user.id
-    action = callback.data.split(":")[1]
-    if action == "cancel":
-        await smart_edit_message(callback.message, "Операция отменена.")
-        await callback.answer()
-        return
-    status = await get_subscription_status(user_id, db=db, panel=panel)
-    if not status.get("active"):
-        await smart_edit_message(callback.message, "❌ Активная подписка не найдена. Заморозка недоступна.")
-        await callback.answer()
-        return
-    if status.get("is_frozen") and status.get("frozen_until"):
-        until_text = status["frozen_until"].strftime("%d.%m.%Y %H:%M")
-        await smart_edit_message(callback.message, f"❄️ Подписка уже заморожена до <b>{until_text}</b>.", parse_mode="HTML")
-        await callback.answer()
-        return
-    try:
-        days = int(action)
-    except (TypeError, ValueError):
-        await callback.answer("Некорректный срок", show_alert=True)
-        return
-    base_email = await panel_base_email(user_id, db)
-    success = await panel.extend_client_expiry(base_email, days)
-    if success:
-        frozen_until_dt = datetime.utcnow() + timedelta(days=days)
-        await db.set_frozen(user_id, frozen_until_dt.strftime("%Y-%m-%d %H:%M:%S"))
-        await smart_edit_message(callback.message, 
-            f"❄️ Подписка помечена как замороженная на <b>{days} дней</b>.\n"
-            f"Статус заморозки действует до <b>{frozen_until_dt.strftime('%d.%m.%Y %H:%M')}</b>.\n\n"
-            "Срок подписки уже компенсирован продлением в панели.",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ В кабинет", callback_data="user_menu:profile")]]),
-        )
-    else:
-        await smart_edit_message(callback.message, "❌ Не удалось заморозить подписку. Попробуйте позже.")
-    await callback.answer()
-
-
-@router.message(F.text == "▶️ Разморозить подписку")
-@router.callback_query(F.data == "profile:unfreeze")
-async def unfreeze_subscription(event, db: Database, panel: PanelAPI):
-    user_id = event.from_user.id
-    status = await get_subscription_status(user_id, db=db, panel=panel)
-    if not status.get("frozen_until"):
-        text = "ℹ️ Подписка сейчас не заморожена."
-    else:
-        await db.clear_frozen(user_id)
-        text = (
-            "✅ Подписка разморожена.\nДоступ снова считается активным сразу, а компенсированные дни уже сохранены."
-            if status.get("active")
-            else "ℹ️ Статус заморозки очищен, активная подписка не найдена."
-        )
-    if isinstance(event, CallbackQuery):
-        await smart_edit_message(event.message, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ В кабинет", callback_data="user_menu:profile")]]))
-        await event.answer()
-    else:
-        await event.answer(text)

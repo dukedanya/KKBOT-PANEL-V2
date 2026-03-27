@@ -10,6 +10,42 @@ class UserRepository:
     def __init__(self, db: PostgresDatabase):
         self.db = db
 
+    async def get_user_snapshot_by_username(self, username: str) -> dict | None:
+        clean_username = str(username or "").strip().lstrip("@").lower()
+        if not clean_username:
+            return None
+        async with self.db.pool.acquire() as conn:  # type: ignore[union-attr]
+            row = await conn.fetchrow(
+                """
+                SELECT
+                    u.user_id,
+                    u.username,
+                    u.first_name,
+                    u.last_name,
+                    u.language_code,
+                    u.is_admin,
+                    (
+                        SELECT jsonb_build_object(
+                            'status', s.status,
+                            'plan_code', s.plan_code,
+                            'traffic_limit_bytes', s.traffic_limit_bytes,
+                            'traffic_used_bytes', s.traffic_used_bytes,
+                            'expires_at', s.expires_at,
+                            'meta', s.meta
+                        )
+                        FROM subscriptions s
+                        WHERE s.user_id = u.user_id
+                        ORDER BY s.id DESC
+                        LIMIT 1
+                    ) AS subscription
+                FROM bot_users u
+                WHERE lower(COALESCE(u.username, '')) = $1
+                LIMIT 1
+                """,
+                clean_username,
+            )
+        return dict(row) if row else None
+
     async def get_user_snapshot(self, user_id: int) -> dict | None:
         async with self.db.pool.acquire() as conn:  # type: ignore[union-attr]
             row = await conn.fetchrow(

@@ -80,7 +80,8 @@ SUPPORT_AUTOHELP_RULES = {
 }
 
 
-def _admin_ticket_keyboard(ticket_id: int, user_id: int) -> InlineKeyboardMarkup:
+def _admin_ticket_keyboard(ticket_id: int, user_id: int, *, assignee_id: int = 0) -> InlineKeyboardMarkup:
+    owner_text = f"🙋 На мне ({assignee_id})" if assignee_id > 0 else "🙋 Взять тикет"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -89,6 +90,7 @@ def _admin_ticket_keyboard(ticket_id: int, user_id: int) -> InlineKeyboardMarkup
                 InlineKeyboardButton(text="🗑 Удалить", callback_data=f"support:close:{ticket_id}:{user_id}"),
             ],
             [
+                InlineKeyboardButton(text=owner_text, callback_data=f"support:assign:{ticket_id}:{user_id}"),
                 InlineKeyboardButton(text="👤 Карточка", callback_data=f"admin:usercard:{user_id}"),
             ],
         ]
@@ -182,6 +184,30 @@ def _trim_text(value: str, limit: int = 40) -> str:
 
 def _safe_support_text(value: str) -> str:
     return escape((value or "").strip())
+
+
+def _ticket_assignee_key(ticket_id: int) -> str:
+    return f"support:assignee:{int(ticket_id)}"
+
+
+async def _get_ticket_assignee(db: Database, ticket_id: int) -> int:
+    if not hasattr(db, "get_setting"):
+        return 0
+    raw = str(await db.get_setting(_ticket_assignee_key(ticket_id), "0") or "0").strip()
+    try:
+        return int(raw)
+    except ValueError:
+        return 0
+
+
+async def _set_ticket_assignee(db: Database, ticket_id: int, admin_user_id: int) -> None:
+    if hasattr(db, "set_setting"):
+        await db.set_setting(_ticket_assignee_key(ticket_id), str(int(admin_user_id)))
+
+
+async def _clear_ticket_assignee(db: Database, ticket_id: int) -> None:
+    if hasattr(db, "set_setting"):
+        await db.set_setting(_ticket_assignee_key(ticket_id), "0")
 
 
 async def _register_support_notice(db: Database, *, chat_id: int, message_id: int, category: str, ttl_hours: int) -> None:
@@ -320,11 +346,13 @@ async def _ensure_support_available(target, db: Database) -> bool:
 
 async def _render_support_ticket_view(db: Database, ticket: dict, *, limit: int = 10) -> str:
     messages = await db.get_support_messages(int(ticket["id"]), limit=limit)
+    assignee_id = await _get_ticket_assignee(db, int(ticket["id"]))
     lines = [
         "🆘 <b>Обращение в поддержку</b>",
         "",
         f"Тикет: <code>#{ticket['id']}</code>",
         f"Статус: <b>{format_support_status(ticket.get('status', ''))}</b>",
+        f"Ответственный: <code>{assignee_id or '-'}</code>",
         f"Обновлён: <b>{_format_support_dt(ticket.get('updated_at', ''))}</b>",
         "",
     ]
@@ -491,6 +519,15 @@ async def support_user_message(message: Message, state: FSMContext, db: Database
         f"Пользователь: <code>{message.from_user.id}</code>\n\n"
         f"{quote}{rendered_text or '<i>Фото без подписи</i>'}"
     )
+    assignee_id = await _get_ticket_assignee(db, ticket_id)
+    if assignee_id:
+        admin_text = (
+            "🆘 <b>Новое сообщение в поддержку</b>\n\n"
+            f"Тикет: <code>#{ticket_id}</code>\n"
+            f"Пользователь: <code>{message.from_user.id}</code>\n"
+            f"Ответственный: <code>{assignee_id}</code>\n\n"
+            f"{quote}{rendered_text or '<i>Фото без подписи</i>'}"
+        )
     for admin_id in Config.ADMIN_USER_IDS:
         try:
             await _send_admin_ticket_message(
@@ -499,7 +536,7 @@ async def support_user_message(message: Message, state: FSMContext, db: Database
                 media_type=media_type,
                 media_file_id=media_file_id,
                 text=admin_text,
-                reply_markup=_admin_ticket_keyboard(ticket_id, message.from_user.id),
+                reply_markup=_admin_ticket_keyboard(ticket_id, message.from_user.id, assignee_id=assignee_id),
             )
         except TelegramBadRequest:
             continue
@@ -513,12 +550,35 @@ async def support_user_message(message: Message, state: FSMContext, db: Database
 @router.callback_query(F.data.startswith("support:reply:"))
 async def support_admin_reply(callback: CallbackQuery, state: FSMContext, db: Database):
     _, _, ticket_id, user_id = callback.data.split(":")
+    await _set_ticket_assignee(db, int(ticket_id), callback.from_user.id)
     await state.set_state(SupportFSM.waiting_admin_reply)
     await state.update_data(ticket_id=int(ticket_id), user_id=int(user_id))
     if hasattr(db, 'set_support_ticket_status'):
         await db.set_support_ticket_status(int(ticket_id), "in_progress", callback.from_user.id)
     await callback.message.answer(f"💬 Ответьте пользователю <code>{user_id}</code> следующим сообщением.\nМожно отправить текст или фото с подписью.", parse_mode="HTML")
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("support:assign:"))
+async def support_assign_owner(callback: CallbackQuery, db: Database):
+    _, _, ticket_id_raw, user_id_raw = callback.data.split(":")
+    ticket_id = int(ticket_id_raw)
+    user_id = int(user_id_raw)
+    await _set_ticket_assignee(db, ticket_id, callback.from_user.id)
+    if hasattr(db, "set_support_ticket_status"):
+        await db.set_support_ticket_status(ticket_id, "in_progress", callback.from_user.id)
+    await smart_edit_message(
+        callback.message,
+        (
+            "🆘 <b>Тикет взят в работу</b>\n\n"
+            f"Тикет: <code>#{ticket_id}</code>\n"
+            f"Пользователь: <code>{user_id}</code>\n"
+            f"Ответственный: <code>{callback.from_user.id}</code>"
+        ),
+        parse_mode="HTML",
+        reply_markup=_admin_ticket_keyboard(ticket_id, user_id, assignee_id=callback.from_user.id),
+    )
+    await callback.answer("Тикет назначен на вас")
 
 
 @router.callback_query(F.data.startswith("support:templates:"))
@@ -528,6 +588,7 @@ async def support_admin_templates(callback: CallbackQuery, db: Database):
     if not ticket:
         await callback.answer("Тикет не найден", show_alert=True)
         return
+    await _set_ticket_assignee(db, int(ticket_id), callback.from_user.id)
     await smart_edit_message(
         callback.message,
         "⚡ <b>Шаблоны ответов</b>\n\nВыберите готовый ответ для пользователя.",
@@ -546,6 +607,7 @@ async def support_admin_send_template(callback: CallbackQuery, db: Database, bot
     if not template_text:
         await callback.answer("Шаблон не найден", show_alert=True)
         return
+    await _set_ticket_assignee(db, ticket_id, callback.from_user.id)
     await db.add_support_message(ticket_id, "admin", callback.from_user.id, template_text)
     if hasattr(db, "set_support_ticket_status"):
         await db.set_support_ticket_status(ticket_id, "in_progress", callback.from_user.id)
@@ -561,7 +623,7 @@ async def support_admin_send_template(callback: CallbackQuery, db: Database, bot
             f"{escape(template_text)}"
         ),
         parse_mode="HTML",
-        reply_markup=_admin_ticket_keyboard(ticket_id, user_id),
+        reply_markup=_admin_ticket_keyboard(ticket_id, user_id, assignee_id=callback.from_user.id),
     )
     await callback.answer("Шаблон отправлен")
 
@@ -583,6 +645,7 @@ async def support_admin_send(message: Message, state: FSMContext, db: Database, 
         await message.answer("⏳ Подождите пару секунд перед повторной отправкой.")
         return
 
+    await _set_ticket_assignee(db, ticket_id, message.from_user.id)
     await db.add_support_message(ticket_id, "admin", message.from_user.id, text, media_type=media_type, media_file_id=media_file_id)
     if hasattr(db, 'set_support_ticket_status'):
         await db.set_support_ticket_status(ticket_id, "in_progress", message.from_user.id)
@@ -608,6 +671,7 @@ async def support_admin_send(message: Message, state: FSMContext, db: Database, 
 async def support_admin_close(callback: CallbackQuery, db: Database, bot: Bot):
     _, _, ticket_id, user_id = callback.data.split(":")
     await db.close_support_ticket(int(ticket_id))
+    await _clear_ticket_assignee(db, int(ticket_id))
     await callback.message.edit_reply_markup(reply_markup=None)
     dismiss_keyboard = InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="🧹 Убрать уведомление", callback_data="dismiss_notice")]]
@@ -633,6 +697,7 @@ async def support_admin_close(callback: CallbackQuery, db: Database, bot: Bot):
 async def support_user_close(callback: CallbackQuery, db: Database, bot: Bot):
     ticket_id = int(callback.data.split(":")[2])
     await db.close_support_ticket(ticket_id)
+    await _clear_ticket_assignee(db, ticket_id)
     try:
         await callback.message.delete()
     except TelegramBadRequest:
