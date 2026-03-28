@@ -331,7 +331,7 @@ async def daily_admin_report_job(ctx: BackgroundContext) -> None:
             now_utc = datetime.now(timezone.utc)
             last_sent_date = str(await ctx.db.get_setting("system:last_daily_admin_report_date", "") or "")
             if _should_send_daily_report(now_utc, last_sent_date):
-                from handlers.payment_diagnostics import _build_daily_report_detail
+                from handlers.admin_analytics_helpers import _build_daily_report_detail
                 from services.health import format_health_text
                 from utils.helpers import notify_admins, register_transient_message
 

@@ -71,6 +71,10 @@ def build_merged_subscription_url(
 
 
 def build_primary_subscription_url(*, client_uuid: str = "", sub_id: str = "") -> str:
+    direct_primary_url = (Config.PRIMARY_SUBSCRIPTION_URL or "").strip()
+    if direct_primary_url:
+        return direct_primary_url
+
     base_subscription_url = ""
     clean_sub_id = (sub_id or "").strip()
     if clean_sub_id and (Config.SUB_PANEL_BASE or "").strip():
@@ -83,6 +87,13 @@ def build_primary_subscription_url(*, client_uuid: str = "", sub_id: str = "") -
     if merged_url:
         return merged_url
     return base_subscription_url
+
+
+def resolve_display_subscription_url(vpn_url: str) -> str:
+    direct_primary_url = (Config.PRIMARY_SUBSCRIPTION_URL or "").strip()
+    if direct_primary_url:
+        return direct_primary_url
+    return (vpn_url or "").strip()
 
 
 def build_grace_subscription_url(vpn_url: str) -> str:
@@ -107,7 +118,7 @@ def render_connection_info(
     plan_name: Optional[str] = None,
     include_sidr: bool = True,
 ) -> str:
-    clean_url = (vpn_url or "").strip()
+    clean_url = resolve_display_subscription_url(vpn_url)
     if not clean_url:
         return ""
 

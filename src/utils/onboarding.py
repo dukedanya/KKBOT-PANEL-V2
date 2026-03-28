@@ -2,6 +2,8 @@ from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from config import Config
+
 
 IOS_URL = "https://apps.apple.com/ru/app/happ-proxy-utility-plus/id6746188973"
 ANDROID_URL = "https://play.google.com/store/apps/details?id=com.happproxy"
@@ -68,6 +70,14 @@ def happ_add_url(subscription_url: str) -> str:
     if not clean_url:
         return ""
     parsed = urlparse(clean_url)
+    override_base = (Config.HAPP_SUBSCRIPTION_API_BASE or "").strip().rstrip("/")
+    if override_base:
+        override = urlparse(override_base)
+        if override.scheme and override.netloc:
+            override_path = (override.path or "").rstrip("/")
+            target_path = parsed.path or ""
+            merged_path = f"{override_path}{target_path}" if override_path else target_path
+            parsed = parsed._replace(scheme=override.scheme, netloc=override.netloc, path=merged_path)
     query_items = [(key, value) for key, value in parse_qsl(parsed.query, keep_blank_values=True) if key != "happ"]
     if not any(key == "format" for key, _ in query_items):
         query_items.append(("format", "plain"))

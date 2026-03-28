@@ -26,6 +26,7 @@ from utils.onboarding import (
     onboarding_platform_text,
     onboarding_text,
 )
+from utils.subscription_links import build_primary_subscription_url
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -433,8 +434,17 @@ async def onboarding_platform(callback: CallbackQuery, db: Database, panel: Pane
     platform = callback.data.rsplit(":", 1)[-1]
     status = await get_subscription_status(callback.from_user.id, db=db, panel=panel)
     user_data = status.get("user") or {}
+    record = status.get("record") or {}
+    record_meta = record.get("meta") if isinstance(record, dict) else {}
+    if not isinstance(record_meta, dict):
+        record_meta = {}
     legacy_user = await db.get_user(callback.from_user.id) or {}
-    subscription_url = str(user_data.get("vpn_url") or legacy_user.get("vpn_url") or "").strip()
+    subscription_url = build_primary_subscription_url(
+        client_uuid=str(record_meta.get("panel_client_uuid") or "").strip(),
+        sub_id=str(record_meta.get("panel_sub_id") or "").strip(),
+    )
+    if not subscription_url:
+        subscription_url = str(user_data.get("vpn_url") or legacy_user.get("vpn_url") or "").strip()
     await smart_edit_message(
         callback.message,
         onboarding_platform_text(platform=platform, subscription_url=subscription_url),

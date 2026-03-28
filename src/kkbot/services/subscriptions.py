@@ -141,7 +141,13 @@ async def get_subscription_status(user_id: int, db, panel) -> dict[str, Any]:
             except Exception:
                 expiry_dt = None
         plan_text = str(record.get("plan_code") or legacy_user.get("plan_text") or "")
-        vpn_url = str(meta.get("vpn_url") or legacy_user.get("vpn_url") or "")
+        panel_client_uuid = str(meta.get("panel_client_uuid") or "").strip()
+        panel_sub_id = str(meta.get("panel_sub_id") or "").strip()
+        rebuilt_vpn_url = legacy_subscriptions.build_primary_subscription_url(
+            client_uuid=panel_client_uuid,
+            sub_id=panel_sub_id,
+        )
+        vpn_url = str(rebuilt_vpn_url or meta.get("vpn_url") or legacy_user.get("vpn_url") or "")
         ip_limit = int(meta.get("ip_limit") or legacy_user.get("ip_limit") or 0)
         return {
             "active": bool(current.get("active")),

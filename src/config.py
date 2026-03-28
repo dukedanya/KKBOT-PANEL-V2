@@ -110,7 +110,9 @@ class Config:
     PAYMENT_CARD_NUMBER: str = os.getenv("PAYMENT_CARD_NUMBER", "")
     PANEL_BASE: str = os.getenv("PANEL_BASE", "").rstrip("/")
     SUB_PANEL_BASE: str = os.getenv("SUB_PANEL_BASE", "")
+    PRIMARY_SUBSCRIPTION_URL: str = os.getenv("PRIMARY_SUBSCRIPTION_URL", "").strip()
     MERGED_SUBSCRIPTION_API_BASE: str = os.getenv("MERGED_SUBSCRIPTION_API_BASE", "").strip()
+    HAPP_SUBSCRIPTION_API_BASE: str = os.getenv("HAPP_SUBSCRIPTION_API_BASE", "").strip()
     MERGED_SUBSCRIPTION_FORMAT: str = os.getenv("MERGED_SUBSCRIPTION_FORMAT", "base64").strip().lower() or "base64"
     MERGED_SUBSCRIPTION_INCLUDE_BASE_URL: bool = str_to_bool(os.getenv("MERGED_SUBSCRIPTION_INCLUDE_BASE_URL", "true"))
     LTE_REPORT_API_HEALTH_URL: str = os.getenv("LTE_REPORT_API_HEALTH_URL", "http://127.0.0.1:8787/health").strip()
