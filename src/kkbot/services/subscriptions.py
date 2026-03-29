@@ -147,6 +147,8 @@ async def get_subscription_status(user_id: int, db, panel) -> dict[str, Any]:
             client_uuid=panel_client_uuid,
             sub_id=panel_sub_id,
         )
+        # Prefer rebuilding from current domain config so stale stored IP-based URLs
+        # in legacy meta do not leak back into the UI.
         vpn_url = str(rebuilt_vpn_url or meta.get("vpn_url") or legacy_user.get("vpn_url") or "")
         ip_limit = int(meta.get("ip_limit") or legacy_user.get("ip_limit") or 0)
         return {

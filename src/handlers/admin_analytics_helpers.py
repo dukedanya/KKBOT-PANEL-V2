@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from config import Config
 from db import Database
 from services.health import collect_health_snapshot
 
@@ -255,6 +258,70 @@ async def _build_incident_report_detail(db: Database, panel, payment_gateway, *,
 🚨 Ошибки за 24ч: <b>{snapshot.get('payment_error_count', 0)}</b>"""
 
 
+def _load_json_file(path_str: str) -> dict[str, Any] | None:
+    path = Path(path_str or "").expanduser()
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _format_slot_host(slot: dict[str, Any]) -> str:
+    host = str(slot.get("host") or "-")
+    port = int(slot.get("port") or 0)
+    return f"{host}:{port}" if port > 0 else host
+
+
+async def _build_whitelist_slots_detail() -> str:
+    assignments = _load_json_file(Config.LTE_SLOT_ASSIGNMENTS_STATE_PATH) or {}
+    health_state = _load_json_file(Config.LTE_SLOT_HEALTH_STATE_PATH) or {}
+    reserve_state = _load_json_file(Config.LTE_SLOT_RESERVE_STATE_PATH) or {}
+
+    slots = assignments.get("slots") or []
+    health_slots = (health_state.get("slots") or {}) if isinstance(health_state, dict) else {}
+    reserve_candidates = reserve_state.get("candidates") or []
+
+    active_lines: list[str] = []
+    for slot in slots:
+        if not isinstance(slot, dict):
+            continue
+        slot_num = int(slot.get("slot") or 0)
+        if slot_num <= 0:
+            continue
+        health = dict(health_slots.get(str(slot_num)) or {})
+        status = "🟢" if health.get("status") == "healthy" else "🔴"
+        last_ok = str(health.get("last_ok_at") or "-")
+        last_good = dict(health.get("last_good_slot") or {})
+        last_good_host = _format_slot_host(last_good) if last_good else "-"
+        active_lines.append(
+            f"{status} <b>#{slot_num}</b> {slot.get('name') or '-'}\n"
+            f"<code>{_format_slot_host(slot)}</code>\n"
+            f"last_ok: <code>{last_ok}</code>\n"
+            f"last_good: <code>{last_good_host}</code>"
+        )
+
+    reserve_lines = [
+        f"{index}. {item.get('name') or '-'} — <code>{_format_slot_host(item)}</code>"
+        for index, item in enumerate(reserve_candidates[:10], start=1)
+        if isinstance(item, dict)
+    ]
+    reserve_more = max(0, int(reserve_state.get("poolSize") or len(reserve_candidates)) - len(reserve_lines))
+
+    return (
+        "🛰 <b>Whitelist slots</b>\n\n"
+        f"Обновлено: <code>{health_state.get('updatedAt') or assignments.get('generatedFrom') or '-'}</code>\n"
+        f"Активных слотов: <b>{len(active_lines)}</b>\n"
+        f"Reserve pool: <b>{int(reserve_state.get('poolSize') or len(reserve_candidates))}</b>\n\n"
+        "<b>Активные #1-#5</b>\n"
+        f"{chr(10).join(active_lines) if active_lines else '—'}\n\n"
+        "<b>Резерв</b>\n"
+        f"{chr(10).join(reserve_lines) if reserve_lines else '—'}"
+        + (f"\n…и ещё <b>{reserve_more}</b>" if reserve_more > 0 else "")
+    )
+
+
 def _admin_section_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="⬅️ К дашборду", callback_data="admin_dashboard")]]
@@ -272,6 +339,7 @@ def _admin_analytics_menu_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="📊 Бот и подписки", callback_data="admindash:bot"),
                 InlineKeyboardButton(text="🩺 Health", callback_data="admindash:health"),
             ],
+            [InlineKeyboardButton(text="🛰 Whitelist slots", callback_data="admindash:whitelist")],
             [
                 InlineKeyboardButton(text="🤝 Рефералка и выводы", callback_data="admindash:referrals"),
                 InlineKeyboardButton(text="🏆 Топ-10 рефералов", callback_data="admindash:topref"),

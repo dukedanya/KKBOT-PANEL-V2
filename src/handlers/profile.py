@@ -1,4 +1,5 @@
 import logging
+import json
 from datetime import datetime
 from typing import Optional
 
@@ -14,7 +15,7 @@ from utils.helpers import replace_message, get_visible_plans
 from kkbot.services.subscriptions import create_subscription, is_active_subscription, get_subscription_status, panel_base_email
 from services.panel import PanelAPI
 from services.payment_gateway import build_payment_gateway, get_provider_label
-from utils.subscription_links import render_connection_info
+from utils.subscription_links import build_primary_subscription_url, render_connection_info
 from utils.onboarding import onboarding_keyboard, onboarding_text
 from utils.telegram_ui import smart_edit_message
 from utils.payments import get_provider_payment_id
@@ -175,11 +176,25 @@ async def render_profile_text(user_id: int, *, status: dict, panel: PanelAPI, db
     else:
         legacy_user = await db.get_user(user_id) if hasattr(db, "get_user") else {}
         legacy_user = legacy_user or {}
+        record = status.get("record") or {}
+        record_meta = record.get("meta") if isinstance(record, dict) else {}
+        if isinstance(record_meta, str) and record_meta.strip():
+            try:
+                record_meta = json.loads(record_meta)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                record_meta = {}
+        if not isinstance(record_meta, dict):
+            record_meta = {}
         base_email = await panel_base_email(user_id, db)
         client_stats = await panel.get_client_stats(base_email)
         full_clients = await panel.find_clients_full_by_email(base_email)
         ip_limit = int(user_data.get("ip_limit") or legacy_user.get("ip_limit") or 0)
-        vpn_url = user_data.get("vpn_url") or legacy_user.get("vpn_url") or ""
+        vpn_url = build_primary_subscription_url(
+            client_uuid=str(record_meta.get("panel_client_uuid") or "").strip(),
+            sub_id=str(record_meta.get("panel_sub_id") or "").strip(),
+        )
+        if not vpn_url:
+            vpn_url = user_data.get("vpn_url") or legacy_user.get("vpn_url") or ""
         connection_info = render_connection_info(vpn_url, user_id=user_id, include_sidr=False)
         expiry_dt = status.get("expiry_dt")
         expiry_date = expiry_dt.strftime("%d.%m.%Y %H:%M") if expiry_dt else "не указана"

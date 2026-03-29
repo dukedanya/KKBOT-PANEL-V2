@@ -13,6 +13,7 @@ from handlers.admin_analytics_helpers import (
     _build_period_report_detail,
     _build_referral_detail,
     _build_top_referrers_detail,
+    _build_whitelist_slots_detail,
     _daily_report_keyboard,
     _incident_report_keyboard,
     _period_report_keyboard,
@@ -108,6 +109,20 @@ async def admin_dash_health(callback: CallbackQuery, db: Database, panel, paymen
     await smart_edit_message(
         callback.message,
         await _build_health_detail(db, panel, payment_gateway),
+        reply_markup=_admin_section_keyboard(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admindash:whitelist")
+async def admin_dash_whitelist(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Недостаточно прав", show_alert=True)
+        return
+    await smart_edit_message(
+        callback.message,
+        await _build_whitelist_slots_detail(),
         reply_markup=_admin_section_keyboard(),
         parse_mode="HTML",
     )

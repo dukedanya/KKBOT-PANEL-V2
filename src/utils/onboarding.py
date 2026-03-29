@@ -66,6 +66,16 @@ def install_url_for_platform(platform: str) -> str:
 
 
 def happ_add_url(subscription_url: str) -> str:
+    clean_url = happ_subscription_url(subscription_url)
+    if not clean_url:
+        return ""
+    parsed = urlparse(clean_url)
+    query_items = [(key, value) for key, value in parse_qsl(parsed.query, keep_blank_values=True) if key != "happ"]
+    query_items.append(("happ", "1"))
+    return urlunparse(parsed._replace(query=urlencode(query_items)))
+
+
+def happ_subscription_url(subscription_url: str) -> str:
     clean_url = (subscription_url or "").strip()
     if not clean_url:
         return ""
@@ -78,24 +88,26 @@ def happ_add_url(subscription_url: str) -> str:
             target_path = parsed.path or ""
             merged_path = f"{override_path}{target_path}" if override_path else target_path
             parsed = parsed._replace(scheme=override.scheme, netloc=override.netloc, path=merged_path)
-    query_items = [(key, value) for key, value in parse_qsl(parsed.query, keep_blank_values=True) if key != "happ"]
+    query_items = [
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if key not in {"happ"}
+    ]
     if not any(key == "format" for key, _ in query_items):
         query_items.append(("format", "plain"))
-    query = urlencode(query_items)
-    query_items = [(key, value) for key, value in parse_qsl(query, keep_blank_values=True) if key != "happ"]
-    query_items.append(("happ", "1"))
     return urlunparse(parsed._replace(query=urlencode(query_items)))
 
 
 def onboarding_platform_text(*, platform: str, subscription_url: str = "") -> str:
     platform_name = PLATFORM_LABELS.get(str(platform or "").strip().lower(), "устройство")
+    plain_happ_url = happ_subscription_url(subscription_url) if subscription_url else ""
     lines = [
         f"❓ <b>Как подключиться | {platform_name}</b>",
         "",
         "Мы рекомендуем <b>Happ</b>.",
         "Через него удобнее всего добавить подписку, быстро подключиться и при необходимости переподключить профиль.",
     ]
-    if subscription_url:
+    if plain_happ_url:
         lines.extend(
             [
                 "",
@@ -104,8 +116,8 @@ def onboarding_platform_text(*, platform: str, subscription_url: str = "") -> st
                 "2. Попробуйте добавить подписку автоматически.",
                 "3. Если это не сработает, откройте <b>HAPP</b>, нажмите <b>+</b> и выберите <b>Добавить из буфера обмена</b>.",
                 "",
-                "Вот ваша ссылка для подключения:",
-                f"<blockquote><code>{subscription_url}</code></blockquote>",
+                "Вот ссылка для вставки в Happ:",
+                f"<blockquote><code>{plain_happ_url}</code></blockquote>",
             ]
         )
     else:

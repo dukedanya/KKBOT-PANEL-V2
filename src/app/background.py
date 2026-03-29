@@ -573,6 +573,24 @@ async def auto_resolve_payment_attention_job(ctx: BackgroundContext) -> None:
             await asyncio.sleep(120)
 
 
+async def sync_cidr_config_to_object_storage_job(ctx: BackgroundContext) -> None:
+    from services.cidr_object_storage_sync import sync_cidr_config_to_object_storage
+
+    while True:
+        try:
+            result = await sync_cidr_config_to_object_storage()
+            logger.info(
+                "CIDR object storage sync complete: lines=%s sources=%s url=%s",
+                result.get("lines"),
+                result.get("sources"),
+                result.get("object_url"),
+            )
+            await asyncio.sleep(max(900, Config.CIDR_OBJECT_STORAGE_SYNC_INTERVAL_SEC))
+        except Exception as exc:
+            logger.error("CIDR object storage sync job failed: %s", exc)
+            await asyncio.sleep(600)
+
+
 def build_job_specs() -> list[JobSpec]:
     settings = Config.jobs_settings()
     return [
@@ -585,6 +603,7 @@ def build_job_specs() -> list[JobSpec]:
         JobSpec("check_expiry_notifications", check_expiry_notifications, settings.enable_expiry_notifications_job),
         JobSpec("health_monitor", health_monitor, settings.enable_health_monitor_job),
         JobSpec("auto_resolve_payment_attention_job", auto_resolve_payment_attention_job, getattr(settings, "enable_payment_attention_resolver_job", True)),
+        JobSpec("sync_cidr_config_to_object_storage_job", sync_cidr_config_to_object_storage_job, getattr(settings, "enable_cidr_object_storage_sync_job", True)),
         JobSpec("archive_closed_support_tickets_job", archive_closed_support_tickets_job, True),
         JobSpec("remind_stale_support_tickets_job", remind_stale_support_tickets_job, True),
         JobSpec("cleanup_transient_messages_job", cleanup_transient_messages_job, True),

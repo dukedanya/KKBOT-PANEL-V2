@@ -1,3 +1,4 @@
+import json
 import logging
 from html import escape
 from typing import Optional
@@ -436,6 +437,11 @@ async def onboarding_platform(callback: CallbackQuery, db: Database, panel: Pane
     user_data = status.get("user") or {}
     record = status.get("record") or {}
     record_meta = record.get("meta") if isinstance(record, dict) else {}
+    if isinstance(record_meta, str) and record_meta.strip():
+        try:
+            record_meta = json.loads(record_meta)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            record_meta = {}
     if not isinstance(record_meta, dict):
         record_meta = {}
     legacy_user = await db.get_user(callback.from_user.id) or {}

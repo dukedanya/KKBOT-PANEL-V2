@@ -115,12 +115,14 @@ def post_payment_inline() -> InlineKeyboardMarkup:
 
 
 def support_inline() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="Поддержка", url=Config.SUPPORT_URL)],
-            [InlineKeyboardButton(text="Главное меню", callback_data="main_menu")],
-        ]
-    )
+    support_url = (Config.SUPPORT_URL or "").strip()
+    rows: list[list[InlineKeyboardButton]] = []
+    if support_url:
+        rows.append([InlineKeyboardButton(text="Поддержка", url=support_url)])
+    else:
+        rows.append([InlineKeyboardButton(text="Поддержка", callback_data="support:start")])
+    rows.append([InlineKeyboardButton(text="Главное меню", callback_data="main_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _build_gift_claim_link(*, token: str, bot=None) -> str:

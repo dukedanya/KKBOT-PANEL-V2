@@ -56,6 +56,7 @@ class JobsSettings:
     enable_referral_reminder_job: bool
     enable_expiry_notifications_job: bool
     enable_payment_attention_resolver_job: bool
+    enable_cidr_object_storage_sync_job: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,12 +114,37 @@ class Config:
     PRIMARY_SUBSCRIPTION_URL: str = os.getenv("PRIMARY_SUBSCRIPTION_URL", "").strip()
     MERGED_SUBSCRIPTION_API_BASE: str = os.getenv("MERGED_SUBSCRIPTION_API_BASE", "").strip()
     HAPP_SUBSCRIPTION_API_BASE: str = os.getenv("HAPP_SUBSCRIPTION_API_BASE", "").strip()
+    CIDR_OBJECT_STORAGE_SYNC_ENABLED: bool = str_to_bool(os.getenv("CIDR_OBJECT_STORAGE_SYNC_ENABLED", "true"))
+    CIDR_OBJECT_STORAGE_SYNC_INTERVAL_SEC: int = int(os.getenv("CIDR_OBJECT_STORAGE_SYNC_INTERVAL_SEC", "3600"))
+    CIDR_OBJECT_STORAGE_SOURCE_URLS: str = os.getenv(
+        "CIDR_OBJECT_STORAGE_SOURCE_URLS",
+        "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/refs/heads/main/Vless-Reality-White-Lists-Rus-Mobile.txt,"
+        "https://github.com/FLEXIY0/matryoshka-vpn/raw/main/configs/russia_whitelist.txt",
+    ).strip()
+    LTE_OBJECT_STORAGE_BUCKET: str = os.getenv("LTE_OBJECT_STORAGE_BUCKET", "").strip()
+    LTE_OBJECT_STORAGE_ACCESS_KEY_ID: str = os.getenv("LTE_OBJECT_STORAGE_ACCESS_KEY_ID", "").strip()
+    LTE_OBJECT_STORAGE_SECRET_ACCESS_KEY: str = os.getenv("LTE_OBJECT_STORAGE_SECRET_ACCESS_KEY", "").strip()
+    LTE_OBJECT_STORAGE_ENDPOINT: str = os.getenv("LTE_OBJECT_STORAGE_ENDPOINT", "https://storage.yandexcloud.net").strip()
+    LTE_OBJECT_STORAGE_OBJECT_NAME: str = os.getenv("LTE_OBJECT_STORAGE_OBJECT_NAME", "config.txt").strip() or "config.txt"
+    LTE_OBJECT_STORAGE_PUBLIC_READ: bool = str_to_bool(os.getenv("LTE_OBJECT_STORAGE_PUBLIC_READ", "true"))
     MERGED_SUBSCRIPTION_FORMAT: str = os.getenv("MERGED_SUBSCRIPTION_FORMAT", "base64").strip().lower() or "base64"
     MERGED_SUBSCRIPTION_INCLUDE_BASE_URL: bool = str_to_bool(os.getenv("MERGED_SUBSCRIPTION_INCLUDE_BASE_URL", "true"))
     LTE_REPORT_API_HEALTH_URL: str = os.getenv("LTE_REPORT_API_HEALTH_URL", "http://127.0.0.1:8787/health").strip()
     TOTAL_TRAFFIC_STATE_PATH: str = os.getenv("TOTAL_TRAFFIC_STATE_PATH", "/root/lte-whitelist/server/data/total-traffic-state.json").strip()
     TOTAL_TRAFFIC_STATE_URL: str = os.getenv("TOTAL_TRAFFIC_STATE_URL", "").strip()
     GRACE_STATE_PATH: str = os.getenv("GRACE_STATE_PATH", "/root/lte-whitelist/server/data/grace-state.json").strip()
+    LTE_SLOT_ASSIGNMENTS_STATE_PATH: str = os.getenv(
+        "LTE_SLOT_ASSIGNMENTS_STATE_PATH",
+        "/root/lte-whitelist/server/data/slot_assignments.json",
+    ).strip()
+    LTE_SLOT_HEALTH_STATE_PATH: str = os.getenv(
+        "LTE_SLOT_HEALTH_STATE_PATH",
+        "/root/lte-whitelist/server/data/slot_health_state.json",
+    ).strip()
+    LTE_SLOT_RESERVE_STATE_PATH: str = os.getenv(
+        "LTE_SLOT_RESERVE_STATE_PATH",
+        "/root/lte-whitelist/server/data/verified_reserve.json",
+    ).strip()
     TOTAL_TRAFFIC_STATE_MAX_AGE_SEC: int = int(os.getenv("TOTAL_TRAFFIC_STATE_MAX_AGE_SEC", "1800"))
     DIRECT_SLOT_NOTICE_ENABLED: bool = str_to_bool(os.getenv("DIRECT_SLOT_NOTICE_ENABLED", "true"))
     ENABLE_SERVER_BOOTSTRAP: bool = str_to_bool(os.getenv("ENABLE_SERVER_BOOTSTRAP", "false"))
@@ -141,6 +167,10 @@ class Config:
     DATABASE_MAX_POOL: int = int(os.getenv("DATABASE_MAX_POOL", "10"))
     DATA_DIR: str = os.getenv("DATA_DIR", str((PROJECT_ROOT / "data").resolve()))
     DATA_FILE: str = os.getenv("DATA_FILE", os.path.join(os.getenv("DATA_DIR", str((PROJECT_ROOT / "data").resolve())), "users.db"))
+    CIDR_OBJECT_STORAGE_LOCAL_PATH: str = os.getenv(
+        "CIDR_OBJECT_STORAGE_LOCAL_PATH",
+        str((Path(DATA_DIR) / "cidr-config.txt").resolve()),
+    ).strip()
     SITE_URL: str = os.getenv("SITE_URL", "")
     TG_CHANNEL: str = os.getenv("TG_CHANNEL", "https://t.me/+XsoxseRgJa8yN2Ni")
     SUPPORT_URL: str = os.getenv("SUPPORT_URL", "")
@@ -315,6 +345,7 @@ class Config:
             enable_referral_reminder_job=cls.ENABLE_REFERRAL_REMINDER_JOB,
             enable_expiry_notifications_job=cls.ENABLE_EXPIRY_NOTIFICATIONS_JOB,
             enable_payment_attention_resolver_job=cls.ENABLE_PAYMENT_ATTENTION_RESOLVER_JOB,
+            enable_cidr_object_storage_sync_job=cls.CIDR_OBJECT_STORAGE_SYNC_ENABLED,
         )
 
     @classmethod
