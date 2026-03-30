@@ -7,7 +7,9 @@ from handlers.admin_analytics_helpers import (
     _admin_analytics_menu_keyboard,
     _admin_section_keyboard,
     _build_bot_stats_detail,
+    _build_funnel_conversion_detail,
     _build_daily_report_detail,
+    _build_funnel_offers_detail,
     _build_health_detail,
     _build_incident_report_detail,
     _build_period_report_detail,
@@ -109,6 +111,34 @@ async def admin_dash_health(callback: CallbackQuery, db: Database, panel, paymen
     await smart_edit_message(
         callback.message,
         await _build_health_detail(db, panel, payment_gateway),
+        reply_markup=_admin_section_keyboard(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admindash:funnel")
+async def admin_dash_funnel(callback: CallbackQuery, db: Database):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Недостаточно прав", show_alert=True)
+        return
+    await smart_edit_message(
+        callback.message,
+        await _build_funnel_offers_detail(db),
+        reply_markup=_admin_section_keyboard(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admindash:conversions")
+async def admin_dash_conversions(callback: CallbackQuery, db: Database):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Недостаточно прав", show_alert=True)
+        return
+    await smart_edit_message(
+        callback.message,
+        await _build_funnel_conversion_detail(db),
         reply_markup=_admin_section_keyboard(),
         parse_mode="HTML",
     )

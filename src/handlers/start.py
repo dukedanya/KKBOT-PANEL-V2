@@ -1,6 +1,7 @@
 import json
 import logging
 from html import escape
+from datetime import datetime, timezone
 from typing import Optional
 
 from aiogram import Router, F, Bot
@@ -113,6 +114,98 @@ def _gift_claim_keyboard(token: str) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="🏠 Главное меню", callback_data="user_menu:main")],
         ]
     )
+
+
+def _start_funnel_key(user_id: int) -> str:
+    return f"funnel:start_prompt:{int(user_id)}"
+
+
+async def _should_show_start_funnel(db: Database, user_id: int) -> bool:
+    if not hasattr(db, "get_setting"):
+        return True
+    raw = str(await db.get_setting(_start_funnel_key(user_id), "") or "").strip()
+    if not raw:
+        return True
+    try:
+        last_dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if last_dt.tzinfo is None:
+        last_dt = last_dt.replace(tzinfo=timezone.utc)
+    diff_hours = (datetime.now(timezone.utc) - last_dt.astimezone(timezone.utc)).total_seconds() / 3600.0
+    return diff_hours >= max(1, int(getattr(Config, "START_FUNNEL_REPEAT_HOURS", 24) or 24))
+
+
+async def _mark_start_funnel_seen(db: Database, user_id: int) -> None:
+    if hasattr(db, "set_setting"):
+        await db.set_setting(_start_funnel_key(user_id), datetime.now(timezone.utc).isoformat())
+
+
+async def _increment_setting_counter(db: Database, key: str, delta: int = 1) -> None:
+    if not hasattr(db, "get_setting") or not hasattr(db, "set_setting"):
+        return
+    raw = await db.get_setting(key, "0")
+    try:
+        current = int(str(raw or "0").strip())
+    except ValueError:
+        current = 0
+    await db.set_setting(key, str(current + int(delta)))
+
+
+def _start_funnel_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✨ Почему наш VPN", callback_data="sales:personal")],
+            [InlineKeyboardButton(text="⚡ Как подключиться", callback_data="onboarding:start")],
+            [InlineKeyboardButton(text="💳 Оформить подписку", callback_data="open_buy_menu")],
+            [InlineKeyboardButton(text="👤 Личный кабинет", callback_data="user_menu:profile")],
+        ]
+    )
+
+
+def _sales_personal_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Выбрать тариф", callback_data="open_buy_menu")],
+            [InlineKeyboardButton(text="⚡ Как подключиться", callback_data="onboarding:start")],
+            [InlineKeyboardButton(text="👤 Личный кабинет", callback_data="user_menu:profile")],
+            [InlineKeyboardButton(text="🏠 Главное меню", callback_data="user_menu:main")],
+        ]
+    )
+
+
+def _trial_feedback_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="👍 Всё нравится", callback_data="trial:feedback:ok")],
+            [InlineKeyboardButton(text="💸 Дороговато", callback_data="trial:feedback:price")],
+            [InlineKeyboardButton(text="😕 Не разобрался", callback_data="trial:feedback:setup")],
+            [InlineKeyboardButton(text="🆘 Нужна помощь", callback_data="support:start")],
+        ]
+    )
+
+
+async def _maybe_show_start_funnel(*, user_id: int, db: Database, panel: PanelAPI, bot: Bot) -> None:
+    status = await get_subscription_status(user_id, db=db, panel=panel)
+    if status.get("active"):
+        return
+    if not await _should_show_start_funnel(db, user_id):
+        return
+    text = (
+        "🚀 <b>Всё готово для подключения</b>\n\n"
+        "Вы уже в одном шаге от рабочего VPN:\n"
+        "• быстрая настройка в Happ\n"
+        "• оформление подписки за пару нажатий\n"
+        "• личный кабинет с готовой ссылкой\n\n"
+        "Выберите удобный следующий шаг."
+    )
+    await bot.send_message(user_id, text, parse_mode="HTML", reply_markup=_start_funnel_keyboard())
+    await _mark_start_funnel_seen(db, user_id)
+    await _increment_setting_counter(db, "analytics:funnel:start_prompt:sent")
+
+
+async def _increment_feedback_counter(db: Database, bucket: str) -> None:
+    await _increment_setting_counter(db, f"analytics:funnel:trial_feedback:{bucket}")
 
 
 async def _activate_gift_token(*, token: str, user_id: int, db: Database, panel: PanelAPI, bot: Bot, message_target) -> bool:
@@ -330,6 +423,7 @@ async def cmd_start(message: Message, state: FSMContext, db: Database, panel: Pa
     except Exception as exc:
         logger.debug("cmd_start: failed to delete cleanup message for user %s: %s", user_id, exc)
     await show_main_menu(user_id, db=db, bot=message.bot, delete_user_msg=message)
+    await _maybe_show_start_funnel(user_id=user_id, db=db, panel=panel, bot=message.bot)
 
 
 @router.callback_query(F.data.startswith("gift:claim:"))
@@ -427,6 +521,64 @@ async def instruction_menu_callback(callback: CallbackQuery, db: Database):
 async def onboarding_start(callback: CallbackQuery):
     text = f"{onboarding_text()}\n\nВыберите устройство ниже:"
     await smart_edit_message(callback.message, text, reply_markup=onboarding_keyboard(), parse_mode="HTML")
+    await callback.answer()
+
+
+@router.callback_query(F.data == "sales:personal")
+async def sales_personal(callback: CallbackQuery):
+    text = (
+        "✨ <b>Почему наш VPN удобно использовать каждый день</b>\n\n"
+        "• Быстрое подключение через Happ\n"
+        "• Белые списки и резервные серверы уже в подписке\n"
+        "• Личный кабинет и ссылка всегда под рукой\n"
+        "• Поддержка и продление прямо в боте\n\n"
+        "Если нужен стабильный доступ без лишней настройки, можно перейти к тарифам прямо сейчас."
+    )
+    await smart_edit_message(
+        callback.message,
+        text,
+        reply_markup=_sales_personal_keyboard(),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("trial:feedback:"))
+async def trial_feedback_callback(callback: CallbackQuery, db: Database):
+    bucket = callback.data.split(":")[-1].strip().lower()
+    if bucket == "ok":
+        await _increment_feedback_counter(db, "ok")
+        await smart_edit_message(
+            callback.message,
+            "👍 <b>Отлично</b>\n\nЕсли пробный тариф вам подошёл, можно уже сейчас выбрать платный тариф и продолжить пользоваться VPN без паузы.",
+            reply_markup=_sales_personal_keyboard(),
+            parse_mode="HTML",
+        )
+    elif bucket == "price":
+        await _increment_feedback_counter(db, "price")
+        await smart_edit_message(
+            callback.message,
+            "💸 <b>Понял</b>\n\nВ боте уже есть стартовые тарифы и персональные офферы. Откройте тарифы — возможно, подходящий вариант уже ждёт вас.",
+            reply_markup=_sales_personal_keyboard(),
+            parse_mode="HTML",
+        )
+    elif bucket == "setup":
+        await _increment_feedback_counter(db, "setup")
+        await smart_edit_message(
+            callback.message,
+            "😕 <b>Давайте упростим</b>\n\nОткройте подключение ещё раз или напишите в поддержку — поможем довести настройку до рабочего состояния.",
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="⚡ Как подключиться", callback_data="onboarding:start")],
+                    [InlineKeyboardButton(text="🆘 Поддержка", callback_data="support:start")],
+                    [InlineKeyboardButton(text="🏠 Главное меню", callback_data="user_menu:main")],
+                ]
+            ),
+            parse_mode="HTML",
+        )
+    else:
+        await callback.answer("Неизвестный ответ", show_alert=True)
+        return
     await callback.answer()
 
 

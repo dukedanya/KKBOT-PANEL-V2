@@ -57,6 +57,8 @@ class JobsSettings:
     enable_expiry_notifications_job: bool
     enable_payment_attention_resolver_job: bool
     enable_cidr_object_storage_sync_job: bool
+    enable_abandoned_payment_reminder_job: bool
+    enable_inactive_user_reactivation_job: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,7 +161,7 @@ class Config:
     SIDR_SUBSCRIPTION_NAME: str = os.getenv("SIDR_SUBSCRIPTION_NAME", "Kakoito VPN").strip() or "Kakoito VPN"
     PANEL_LOGIN: str = os.getenv("PANEL_LOGIN", "")
     PANEL_PASSWORD: str = os.getenv("PANEL_PASSWORD", "")
-    PANEL_TARGET_INBOUND_IDS: str = os.getenv("PANEL_TARGET_INBOUND_IDS", "1,2,3,4,5,6,7").strip()
+    PANEL_TARGET_INBOUND_IDS: str = os.getenv("PANEL_TARGET_INBOUND_IDS", "1,2,3,4,5,6,7,15").strip()
     PANEL_TARGET_INBOUND_COUNT: int = int(os.getenv("PANEL_TARGET_INBOUND_COUNT", "0"))
     VERIFY_SSL: bool = str_to_bool(os.getenv("VERIFY_SSL", "true"))
     DATABASE_URL: str = os.getenv("DATABASE_URL", "").strip()
@@ -228,6 +230,8 @@ class Config:
     ENABLE_REFERRAL_REMINDER_JOB: bool = str_to_bool(os.getenv("ENABLE_REFERRAL_REMINDER_JOB", "true"))
     ENABLE_EXPIRY_NOTIFICATIONS_JOB: bool = str_to_bool(os.getenv("ENABLE_EXPIRY_NOTIFICATIONS_JOB", "true"))
     ENABLE_PAYMENT_ATTENTION_RESOLVER_JOB: bool = str_to_bool(os.getenv("ENABLE_PAYMENT_ATTENTION_RESOLVER_JOB", "true"))
+    ENABLE_ABANDONED_PAYMENT_REMINDER_JOB: bool = str_to_bool(os.getenv("ENABLE_ABANDONED_PAYMENT_REMINDER_JOB", "true"))
+    ENABLE_INACTIVE_USER_REACTIVATION_JOB: bool = str_to_bool(os.getenv("ENABLE_INACTIVE_USER_REACTIVATION_JOB", "true"))
     HEALTHCHECK_PATH: str = os.getenv("HEALTHCHECK_PATH", "/healthz")
     READINESS_PATH: str = os.getenv("READINESS_PATH", "/readyz")
     ENABLE_HEALTH_ENDPOINTS: bool = str_to_bool(os.getenv("ENABLE_HEALTH_ENDPOINTS", "true"))
@@ -257,6 +261,16 @@ class Config:
     SUPPORT_TICKET_REMINDER_INTERVAL_MIN: int = int(os.getenv("SUPPORT_TICKET_REMINDER_INTERVAL_MIN", "180"))
     GIFT_LINK_REMINDER_AFTER_HOURS: int = int(os.getenv("GIFT_LINK_REMINDER_AFTER_HOURS", "24"))
     GIFT_LINK_REMINDER_INTERVAL_HOURS: int = int(os.getenv("GIFT_LINK_REMINDER_INTERVAL_HOURS", "24"))
+    START_FUNNEL_REPEAT_HOURS: int = int(os.getenv("START_FUNNEL_REPEAT_HOURS", "24"))
+    ABANDONED_PAYMENT_REMINDER_AFTER_MIN: int = int(os.getenv("ABANDONED_PAYMENT_REMINDER_AFTER_MIN", "20"))
+    ABANDONED_PAYMENT_REMINDER_REPEAT_HOURS: int = int(os.getenv("ABANDONED_PAYMENT_REMINDER_REPEAT_HOURS", "12"))
+    INACTIVE_USER_REACTIVATION_AFTER_HOURS: int = int(os.getenv("INACTIVE_USER_REACTIVATION_AFTER_HOURS", "72"))
+    INACTIVE_USER_REACTIVATION_REPEAT_HOURS: int = int(os.getenv("INACTIVE_USER_REACTIVATION_REPEAT_HOURS", "168"))
+    EXPIRED_SUBSCRIPTION_REACTIVATION_AFTER_HOURS: int = int(os.getenv("EXPIRED_SUBSCRIPTION_REACTIVATION_AFTER_HOURS", "12"))
+    EXPIRED_SUBSCRIPTION_REACTIVATION_REPEAT_HOURS: int = int(os.getenv("EXPIRED_SUBSCRIPTION_REACTIVATION_REPEAT_HOURS", "72"))
+    FUNNEL_ATTRIBUTION_WINDOW_HOURS: int = int(os.getenv("FUNNEL_ATTRIBUTION_WINDOW_HOURS", "72"))
+    TRIAL_RECOVERY_PROMO_PERCENT: float = float(os.getenv("TRIAL_RECOVERY_PROMO_PERCENT", "15"))
+    TRIAL_RECOVERY_PROMO_EXPIRE_HOURS: int = int(os.getenv("TRIAL_RECOVERY_PROMO_EXPIRE_HOURS", "72"))
     ADMIN_GIFT_REFERRER_ID: int = int(os.getenv("ADMIN_GIFT_REFERRER_ID", "794419497"))
     ADMIN_GIFT_EXPIRE_DAYS: int = int(os.getenv("ADMIN_GIFT_EXPIRE_DAYS", "3"))
     SERVICE_MESSAGE_CLEANUP_INTERVAL_SEC: int = int(os.getenv("SERVICE_MESSAGE_CLEANUP_INTERVAL_SEC", "1800"))
@@ -346,6 +360,8 @@ class Config:
             enable_expiry_notifications_job=cls.ENABLE_EXPIRY_NOTIFICATIONS_JOB,
             enable_payment_attention_resolver_job=cls.ENABLE_PAYMENT_ATTENTION_RESOLVER_JOB,
             enable_cidr_object_storage_sync_job=cls.CIDR_OBJECT_STORAGE_SYNC_ENABLED,
+            enable_abandoned_payment_reminder_job=cls.ENABLE_ABANDONED_PAYMENT_REMINDER_JOB,
+            enable_inactive_user_reactivation_job=cls.ENABLE_INACTIVE_USER_REACTIVATION_JOB,
         )
 
     @classmethod

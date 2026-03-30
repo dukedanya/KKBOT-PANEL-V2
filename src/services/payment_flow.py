@@ -27,6 +27,74 @@ def _pending_ref_key(user_id: int) -> str:
     return f"ref:pending:{int(user_id)}"
 
 
+async def _increment_setting_counter(db: Database, key: str, delta: int = 1) -> None:
+    if not hasattr(db, "get_setting") or not hasattr(db, "set_setting"):
+        return
+    raw = await db.get_setting(key, "0")
+    try:
+        current = int(str(raw or "0").strip())
+    except ValueError:
+        current = 0
+    await db.set_setting(key, str(current + int(delta)))
+
+
+async def _setting_is_recent(db: Database, key: str, *, window_hours: int) -> bool:
+    if not hasattr(db, "get_setting"):
+        return False
+    raw = str(await db.get_setting(key, "") or "").strip()
+    if not raw:
+        return False
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    age_seconds = (datetime.now(timezone.utc) - parsed.astimezone(timezone.utc)).total_seconds()
+    return age_seconds <= max(1, int(window_hours)) * 3600
+
+
+async def _mark_funnel_conversion(*, db: Database, payment_id: str, user_id: int) -> None:
+    conversion_key = f"analytics:funnel:conversion:payment:{payment_id}"
+    if hasattr(db, "get_setting"):
+        already = str(await db.get_setting(conversion_key, "") or "").strip()
+        if already:
+            return
+
+    user_id = int(user_id)
+    attributed = ""
+    attribution_window_hours = int(getattr(Config, "FUNNEL_ATTRIBUTION_WINDOW_HOURS", 72) or 72)
+    if hasattr(db, "get_setting"):
+        if await _setting_is_recent(db, f"marketing:trial_followup:{user_id}", window_hours=attribution_window_hours):
+            attributed = "trial_followup"
+        if not attributed:
+            if await _setting_is_recent(db, f"marketing:inactive_reactivation:{user_id}:trial_offer", window_hours=attribution_window_hours):
+                attributed = "trial_promo_offer"
+        if not attributed:
+            if await _setting_is_recent(db, f"marketing:expired_reactivation:{user_id}", window_hours=attribution_window_hours):
+                attributed = "trial_or_expired"
+        if not attributed:
+            for stage in ("20m", "12h", "24h"):
+                if await _setting_is_recent(db, f"payments:abandoned_reminder:{payment_id}:{stage}", window_hours=attribution_window_hours):
+                    attributed = f"abandoned_payment_{stage}"
+                    break
+        if not attributed:
+            for stage in ("12h", "3d", "7d"):
+                if await _setting_is_recent(db, f"marketing:inactive_reactivation:{user_id}:{stage}", window_hours=attribution_window_hours):
+                    attributed = f"reactivation_{stage}"
+                    break
+        if not attributed:
+            if await _setting_is_recent(db, f"funnel:start_prompt:{user_id}", window_hours=attribution_window_hours):
+                attributed = "start_prompt"
+
+    if not attributed:
+        attributed = "organic"
+
+    await _increment_setting_counter(db, f"analytics:funnel:conversion:{attributed}")
+    if hasattr(db, "set_setting"):
+        await db.set_setting(conversion_key, attributed)
+
+
 async def _call_db_method(db, method_name: str, *args, **kwargs):
     method = getattr(db, method_name)
     try:
@@ -370,6 +438,11 @@ async def process_successful_payment(
         "gift_note": gift_note,
         "gift_link_token": gift_link_token,
     }
+
+    try:
+        await _mark_funnel_conversion(db=db, payment_id=payment_id, user_id=recipient_user_id)
+    except Exception as analytics_error:
+        logger.warning("Funnel conversion attribution failed: payment=%s user=%s error=%s", payment_id, recipient_user_id, analytics_error)
 
     if bot:
         connection_info = render_connection_info(vpn_url, user_id=recipient_user_id, plan_name=plan.get("name", plan_id)) if vpn_url else ""

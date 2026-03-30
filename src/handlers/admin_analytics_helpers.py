@@ -93,6 +93,118 @@ def _format_pct(numerator: int, denominator: int) -> str:
     return f"{(float(numerator) / float(denominator) * 100):.1f}%"
 
 
+async def _get_int_setting(db: Database, key: str) -> int:
+    raw = await db.get_setting(key, "0") if hasattr(db, "get_setting") else "0"
+    try:
+        return int(str(raw or "0").strip())
+    except ValueError:
+        return 0
+
+
+async def _build_funnel_offers_detail(db: Database) -> str:
+    start_sent = await _get_int_setting(db, "analytics:funnel:start_prompt:sent")
+    trial_day1 = await _get_int_setting(db, "analytics:funnel:trial:day1_followup:sent")
+    trial_3d = await _get_int_setting(db, "analytics:funnel:trial:3d:sent")
+    trial_1d = await _get_int_setting(db, "analytics:funnel:trial:1d:sent")
+    trial_1h = await _get_int_setting(db, "analytics:funnel:trial:1h:sent")
+    trial_expired = await _get_int_setting(db, "analytics:funnel:trial:expired:sent")
+    trial_promo = await _get_int_setting(db, "analytics:funnel:trial:promo_offer:sent")
+    abandoned_20m = await _get_int_setting(db, "analytics:funnel:abandoned_payment:20m:sent")
+    abandoned_12h = await _get_int_setting(db, "analytics:funnel:abandoned_payment:12h:sent")
+    abandoned_24h = await _get_int_setting(db, "analytics:funnel:abandoned_payment:24h:sent")
+    react_12h = await _get_int_setting(db, "analytics:funnel:reactivation:12h:sent")
+    react_3d = await _get_int_setting(db, "analytics:funnel:reactivation:3d:sent")
+    react_7d = await _get_int_setting(db, "analytics:funnel:reactivation:7d:sent")
+
+    conv_start = await _get_int_setting(db, "analytics:funnel:conversion:start_prompt")
+    conv_trial = await _get_int_setting(db, "analytics:funnel:conversion:trial_followup")
+    conv_trial_or_expired = await _get_int_setting(db, "analytics:funnel:conversion:trial_or_expired")
+    conv_trial_promo = await _get_int_setting(db, "analytics:funnel:conversion:trial_promo_offer")
+    conv_abandoned_20m = await _get_int_setting(db, "analytics:funnel:conversion:abandoned_payment_20m")
+    conv_abandoned_12h = await _get_int_setting(db, "analytics:funnel:conversion:abandoned_payment_12h")
+    conv_abandoned_24h = await _get_int_setting(db, "analytics:funnel:conversion:abandoned_payment_24h")
+    conv_react_12h = await _get_int_setting(db, "analytics:funnel:conversion:reactivation_12h")
+    conv_react_3d = await _get_int_setting(db, "analytics:funnel:conversion:reactivation_3d")
+    conv_react_7d = await _get_int_setting(db, "analytics:funnel:conversion:reactivation_7d")
+    conv_organic = await _get_int_setting(db, "analytics:funnel:conversion:organic")
+
+    return (
+        "🎯 <b>Офферы и дожимка</b>\n\n"
+        "<b>Отправки</b>\n"
+        f"🚀 Стартовая воронка: <b>{start_sent}</b>\n"
+        f"🎁 Trial day 1: <b>{trial_day1}</b>\n"
+        f"🎁 Trial 3d / 1d / 1h / expired: <b>{trial_3d}</b> / <b>{trial_1d}</b> / <b>{trial_1h}</b> / <b>{trial_expired}</b>\n"
+        f"🏷 Trial promo offer: <b>{trial_promo}</b>\n"
+        f"💳 Брошенная оплата 20m / 12h / 24h: <b>{abandoned_20m}</b> / <b>{abandoned_12h}</b> / <b>{abandoned_24h}</b>\n"
+        f"♻️ Реактивация 12h / 3d / 7d: <b>{react_12h}</b> / <b>{react_3d}</b> / <b>{react_7d}</b>\n\n"
+        "<b>Атрибутированные оплаты</b>\n"
+        f"🚀 После стартовой воронки: <b>{conv_start}</b>\n"
+        f"🎁 После trial follow-up: <b>{conv_trial}</b>\n"
+        f"🏷 После trial promo offer: <b>{conv_trial_promo}</b>\n"
+        f"🎁/⌛ После trial-expired сценария: <b>{conv_trial_or_expired}</b>\n"
+        f"💳 После abandoned 20m / 12h / 24h: <b>{conv_abandoned_20m}</b> / <b>{conv_abandoned_12h}</b> / <b>{conv_abandoned_24h}</b>\n"
+        f"♻️ После reactivation 12h / 3d / 7d: <b>{conv_react_12h}</b> / <b>{conv_react_3d}</b> / <b>{conv_react_7d}</b>\n"
+        f"🌿 Без атрибуции: <b>{conv_organic}</b>"
+    )
+
+
+async def _build_funnel_conversion_detail(db: Database) -> str:
+    start_sent = await _get_int_setting(db, "analytics:funnel:start_prompt:sent")
+    trial_day1 = await _get_int_setting(db, "analytics:funnel:trial:day1_followup:sent")
+    trial_total = (
+        await _get_int_setting(db, "analytics:funnel:trial:3d:sent")
+        + await _get_int_setting(db, "analytics:funnel:trial:1d:sent")
+        + await _get_int_setting(db, "analytics:funnel:trial:1h:sent")
+        + await _get_int_setting(db, "analytics:funnel:trial:expired:sent")
+        + await _get_int_setting(db, "analytics:funnel:trial:promo_offer:sent")
+    )
+    abandoned_total = (
+        await _get_int_setting(db, "analytics:funnel:abandoned_payment:20m:sent")
+        + await _get_int_setting(db, "analytics:funnel:abandoned_payment:12h:sent")
+        + await _get_int_setting(db, "analytics:funnel:abandoned_payment:24h:sent")
+    )
+    reactivation_total = (
+        await _get_int_setting(db, "analytics:funnel:reactivation:12h:sent")
+        + await _get_int_setting(db, "analytics:funnel:reactivation:3d:sent")
+        + await _get_int_setting(db, "analytics:funnel:reactivation:7d:sent")
+    )
+
+    conv_start = await _get_int_setting(db, "analytics:funnel:conversion:start_prompt")
+    conv_trial = (
+        await _get_int_setting(db, "analytics:funnel:conversion:trial_followup")
+        + await _get_int_setting(db, "analytics:funnel:conversion:trial_or_expired")
+        + await _get_int_setting(db, "analytics:funnel:conversion:trial_promo_offer")
+    )
+    conv_abandoned = (
+        await _get_int_setting(db, "analytics:funnel:conversion:abandoned_payment_20m")
+        + await _get_int_setting(db, "analytics:funnel:conversion:abandoned_payment_12h")
+        + await _get_int_setting(db, "analytics:funnel:conversion:abandoned_payment_24h")
+    )
+    conv_reactivation = (
+        await _get_int_setting(db, "analytics:funnel:conversion:reactivation_12h")
+        + await _get_int_setting(db, "analytics:funnel:conversion:reactivation_3d")
+        + await _get_int_setting(db, "analytics:funnel:conversion:reactivation_7d")
+    )
+    conv_organic = await _get_int_setting(db, "analytics:funnel:conversion:organic")
+    total_tracked = conv_start + conv_trial + conv_abandoned + conv_reactivation + conv_organic
+
+    def row(title: str, sent: int, converted: int) -> str:
+        return f"• {title}: <b>{sent}</b> → <b>{converted}</b> ({_format_pct(converted, sent)})"
+
+    return (
+        "📐 <b>Конверсии по воронке</b>\n\n"
+        f"{row('Стартовая воронка', start_sent, conv_start)}\n"
+        f"{row('Trial day 1', trial_day1, await _get_int_setting(db, 'analytics:funnel:conversion:trial_followup'))}\n"
+        f"{row('Trial reminders + expired', trial_total, await _get_int_setting(db, 'analytics:funnel:conversion:trial_or_expired') + await _get_int_setting(db, 'analytics:funnel:conversion:trial_promo_offer'))}\n"
+        f"{row('Брошенная оплата', abandoned_total, conv_abandoned)}\n"
+        f"{row('Возврат истёкших', reactivation_total, conv_reactivation)}\n\n"
+        "<b>Итог</b>\n"
+        f"💳 Атрибутированных оплат: <b>{conv_start + conv_trial + conv_abandoned + conv_reactivation}</b>\n"
+        f"🌿 Без атрибуции: <b>{conv_organic}</b>\n"
+        f"🧾 Всего учтённых оплат: <b>{total_tracked}</b>"
+    )
+
+
 def _build_analytics_period_rows() -> list[list[InlineKeyboardButton]]:
     return [
         [
@@ -339,6 +451,8 @@ def _admin_analytics_menu_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="📊 Бот и подписки", callback_data="admindash:bot"),
                 InlineKeyboardButton(text="🩺 Health", callback_data="admindash:health"),
             ],
+            [InlineKeyboardButton(text="🎯 Офферы и дожимка", callback_data="admindash:funnel")],
+            [InlineKeyboardButton(text="📐 Конверсии", callback_data="admindash:conversions")],
             [InlineKeyboardButton(text="🛰 Whitelist slots", callback_data="admindash:whitelist")],
             [
                 InlineKeyboardButton(text="🤝 Рефералка и выводы", callback_data="admindash:referrals"),

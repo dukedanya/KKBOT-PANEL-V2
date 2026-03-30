@@ -2,10 +2,11 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable
 
 from aiogram import Bot
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from config import Config
 from services.health import collect_health_snapshot, emit_health_alerts
@@ -49,6 +50,134 @@ def _is_payment_retry_due(payment: dict) -> bool:
     if not next_retry_at:
         return True
     return next_retry_at <= datetime.utcnow()
+
+
+def _utc_now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _hours_since(value: object) -> float | None:
+    parsed = _parse_sqlite_ts(value)
+    if not parsed:
+        return None
+    return (_utc_now_naive() - parsed).total_seconds() / 3600.0
+
+
+async def _setting_ts_due(db: object, key: str, *, repeat_hours: int) -> bool:
+    raw = await db.get_setting(key, "") if hasattr(db, "get_setting") else ""
+    if not raw:
+        return True
+    parsed = _parse_sqlite_ts(raw)
+    if not parsed:
+        return True
+    return (_utc_now_naive() - parsed).total_seconds() >= max(1, repeat_hours) * 3600
+
+
+async def _setting_age_hours(db: object, key: str) -> float | None:
+    raw = await db.get_setting(key, "") if hasattr(db, "get_setting") else ""
+    if not raw:
+        return None
+    parsed = _parse_sqlite_ts(raw)
+    if not parsed:
+        return None
+    return (_utc_now_naive() - parsed).total_seconds() / 3600.0
+
+
+async def _mark_setting_ts(db: object, key: str) -> None:
+    if hasattr(db, "set_setting"):
+        await db.set_setting(key, datetime.now(timezone.utc).isoformat())
+
+
+def _abandoned_payment_reminder_key(payment_id: str) -> str:
+    return f"payments:abandoned_reminder:{payment_id}"
+
+
+def _inactive_reactivation_key(user_id: int) -> str:
+    return f"marketing:inactive_reactivation:{int(user_id)}"
+
+
+def _expired_reactivation_key(user_id: int) -> str:
+    return f"marketing:expired_reactivation:{int(user_id)}"
+
+
+def _trial_followup_key(user_id: int) -> str:
+    return f"marketing:trial_followup:{int(user_id)}"
+
+
+def _trial_recovery_promo_key(user_id: int) -> str:
+    return f"marketing:trial_recovery_promo:{int(user_id)}"
+
+
+def _stage_setting_key(prefix: str, entity_id: str | int, stage_id: str) -> str:
+    return f"{prefix}:{entity_id}:{stage_id}"
+
+
+async def _increment_setting_counter(db: object, key: str, delta: int = 1) -> None:
+    if not hasattr(db, "get_setting") or not hasattr(db, "set_setting"):
+        return
+    raw = await db.get_setting(key, "0")
+    try:
+        current = int(str(raw or "0").strip())
+    except ValueError:
+        current = 0
+    await db.set_setting(key, str(current + int(delta)))
+
+
+async def _ensure_trial_recovery_promo(db: object, user_id: int) -> str:
+    existing = await db.get_setting(_trial_recovery_promo_key(user_id), "") if hasattr(db, "get_setting") else ""
+    code = str(existing or "").strip().upper()
+    if code and hasattr(db, "get_promo_code"):
+        promo = await db.get_promo_code(code)
+        if promo:
+            return code
+
+    code = f"TRIAL{int(user_id)}"
+    expires_at = (datetime.now(timezone.utc) + timedelta(hours=max(1, int(Config.TRIAL_RECOVERY_PROMO_EXPIRE_HOURS or 72)))).isoformat()
+    if hasattr(db, "create_or_update_promo_code"):
+        await db.create_or_update_promo_code(
+            code,
+            title=f"Trial recovery {user_id}",
+            description=f"Персональный оффер после trial для user {user_id}",
+            discount_percent=float(Config.TRIAL_RECOVERY_PROMO_PERCENT or 15.0),
+            discount_type="percent",
+            fixed_amount=0.0,
+            only_new_users=False,
+            plan_ids="",
+            user_limit=1,
+            max_uses=1,
+            active=True,
+            expires_at=expires_at,
+        )
+    if hasattr(db, "set_active_user_promo_code"):
+        await db.set_active_user_promo_code(user_id, code)
+    if hasattr(db, "set_setting"):
+        await db.set_setting(_trial_recovery_promo_key(user_id), code)
+    return code
+
+
+async def _resolve_payment_checkout_url(payment: dict, payment_gateway) -> str:
+    from services.payment_gateway import build_payment_gateway
+    from utils.payments import get_provider_payment_id
+
+    provider = str(payment.get("provider") or "").strip().lower()
+    if not provider or provider in {"balance", "telegram_stars"}:
+        return ""
+    provider_payment_id = get_provider_payment_id(payment)
+    if not provider_payment_id:
+        return ""
+    gateway = payment_gateway
+    should_close = False
+    if str(getattr(payment_gateway, "provider_name", "") or "").strip().lower() != provider:
+        gateway = build_payment_gateway(provider)
+        should_close = True
+    try:
+        remote_payment = await gateway.get_payment(provider_payment_id)
+        if not remote_payment:
+            return ""
+        return gateway.get_checkout_url(remote_payment) or ""
+    finally:
+        if should_close and hasattr(gateway, "close"):
+            await gateway.close()
 
 
 async def _set_safe_mode(ctx: BackgroundContext, *, enabled: bool, reason: str) -> None:
@@ -438,6 +567,139 @@ async def remind_unpaid_referrals(ctx: BackgroundContext) -> None:
             await asyncio.sleep(3600)
 
 
+async def remind_abandoned_payments_job(ctx: BackgroundContext) -> None:
+    from utils.helpers import notify_user
+
+    stages = [
+        ("20m", "💳 <b>Ваш доступ почти готов</b>\n\nПлатёж на <b>{amount:.2f} ₽</b>{provider_suffix} всё ещё ждёт подтверждения.\n\nЗавершите оплату сейчас, и подписка активируется автоматически.", 20 / 60),
+        ("12h", "⏳ <b>Мы сохранили ваш платёж</b>\n\nПлатёж на <b>{amount:.2f} ₽</b>{provider_suffix} всё ещё можно завершить.\n\nЕсли VPN нужен, вернитесь к оплате по кнопке ниже.", 12),
+        ("24h", "🔥 <b>Доступ всё ещё можно активировать</b>\n\nВаш платёж на <b>{amount:.2f} ₽</b>{provider_suffix} остался незавершённым.\n\nЗавершите его, и бот сразу выдаст рабочее подключение.", 24),
+    ]
+    kb_fallback = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Продолжить оплату", callback_data="open_buy_menu")],
+            [InlineKeyboardButton(text="👤 Личный кабинет", callback_data="user_menu:profile")],
+        ]
+    )
+
+    while True:
+        try:
+            old_pending = await ctx.db.get_old_pending_payments(Config.ABANDONED_PAYMENT_REMINDER_AFTER_MIN)
+            for payment in old_pending:
+                payment_id = str(payment.get("payment_id") or "").strip()
+                user_id = int(payment.get("user_id") or 0)
+                if not payment_id or user_id <= 0:
+                    continue
+                created_hours = _hours_since(payment.get("created_at"))
+                if created_hours is None:
+                    continue
+                checkout_url = await _resolve_payment_checkout_url(payment, ctx.payment_gateway)
+                markup = kb_fallback
+                if checkout_url:
+                    markup = InlineKeyboardMarkup(
+                        inline_keyboard=[
+                            [InlineKeyboardButton(text="💳 Продолжить оплату", url=checkout_url)],
+                            [InlineKeyboardButton(text="👤 Личный кабинет", callback_data="user_menu:profile")],
+                        ]
+                    )
+                amount = float(payment.get("amount") or 0.0)
+                provider = str(payment.get("provider") or "").strip()
+                provider_suffix = f" через <b>{provider}</b>" if provider else ""
+                for stage_id, template, min_hours in stages:
+                    if created_hours < min_hours:
+                        continue
+                    key = _stage_setting_key("payments:abandoned_reminder", payment_id, stage_id)
+                    if not await _setting_ts_due(
+                        ctx.db,
+                        key,
+                        repeat_hours=Config.ABANDONED_PAYMENT_REMINDER_REPEAT_HOURS * 10,
+                    ):
+                        continue
+                    text = template.format(amount=amount, provider_suffix=provider_suffix)
+                    await notify_user(user_id, text, reply_markup=markup, bot=ctx.bot)
+                    await _mark_setting_ts(ctx.db, key)
+                    await _increment_setting_counter(ctx.db, f"analytics:funnel:abandoned_payment:{stage_id}:sent")
+            await asyncio.sleep(max(900, Config.ABANDONED_PAYMENT_REMINDER_AFTER_MIN * 60))
+        except Exception as exc:
+            logger.error("Abandoned payment reminder job failed: %s", exc)
+            await asyncio.sleep(900)
+
+
+async def reactivate_inactive_users_job(ctx: BackgroundContext) -> None:
+    from utils.helpers import notify_user
+    from tariffs import get_minimal_by_price
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Оформить подписку", callback_data="open_buy_menu")],
+            [InlineKeyboardButton(text="⚡ Как подключиться", callback_data="onboarding:start")],
+        ]
+    )
+
+    while True:
+        try:
+            minimal_plan = get_minimal_by_price() or {}
+            minimal_price = float(minimal_plan.get("price_rub") or 0.0)
+            offer_line = f"\n\n💡 Оптимальный старт сейчас: <b>от {minimal_price:.0f} ₽</b>." if minimal_price > 0 else ""
+            expired_stages = [
+                ("12h", 12, None, 0, "⌛ <b>Подписка закончилась</b>\n\nПродлите её сейчас, и доступ вернётся сразу, без новой настройки и поиска ссылки." + offer_line),
+                ("3d", 72, "12h", 24, "👋 <b>Можно вернуться за минуту</b>\n\nПодписка закончилась, но бот уже сохранил ваше подключение. Продлите её и снова пользуйтесь VPN без лишних действий." + offer_line),
+                ("7d", 168, "3d", 48, "🔥 <b>VPN всё ещё ждёт вас</b>\n\nЕсли доступ снова нужен, просто вернитесь к продлению. Настройка уже готова, останется только оплатить." + offer_line),
+            ]
+            users = await ctx.db.get_users_for_broadcast_segment("inactive")
+            for user in users:
+                user_id = int(user.get("user_id") or 0)
+                if user_id <= 0:
+                    continue
+                if bool(user.get("has_subscription")):
+                    continue
+                base_hours = _hours_since(user.get("expiry_date")) or _hours_since(user.get("join_date"))
+                if base_hours is None or base_hours < Config.INACTIVE_USER_REACTIVATION_AFTER_HOURS:
+                    continue
+                payments = await ctx.db.get_pending_payments_by_user(user_id) if hasattr(ctx.db, "get_pending_payments_by_user") else []
+                if any(str(item.get("status") or "").strip().lower() in {"pending", "processing", "waiting_for_capture"} for item in payments):
+                    continue
+                status = await ctx.db.get_user(user_id)
+                if bool((status or {}).get("trial_used")) and not bool((status or {}).get("has_subscription")):
+                    if base_hours < max(72, Config.INACTIVE_USER_REACTIVATION_AFTER_HOURS):
+                        continue
+                    promo_code = await _ensure_trial_recovery_promo(ctx.db, user_id)
+                    key = _stage_setting_key("marketing:inactive_reactivation", user_id, "trial_offer")
+                    if await _setting_ts_due(ctx.db, key, repeat_hours=Config.INACTIVE_USER_REACTIVATION_REPEAT_HOURS * 10):
+                        await notify_user(
+                            user_id,
+                            "🎁 <b>Для вас сохранили персональный оффер</b>\n\n"
+                            "Пробный период уже закончился, но вы можете вернуться со скидкой.\n"
+                            f"Ваш промокод: <code>{promo_code}</code>\n"
+                            f"Скидка: <b>{float(Config.TRIAL_RECOVERY_PROMO_PERCENT or 15.0):.0f}%</b>\n\n"
+                            "Промокод уже привязан в боте, можно просто перейти к тарифам.",
+                            reply_markup=kb,
+                            bot=ctx.bot,
+                        )
+                        await _mark_setting_ts(ctx.db, key)
+                        await _increment_setting_counter(ctx.db, "analytics:funnel:trial:promo_offer:sent")
+                    continue
+                for stage_id, min_hours, required_prev_stage, min_gap_hours, text in expired_stages:
+                    if base_hours < min_hours:
+                        continue
+                    key = _stage_setting_key("marketing:inactive_reactivation", user_id, stage_id)
+                    if not await _setting_ts_due(ctx.db, key, repeat_hours=Config.INACTIVE_USER_REACTIVATION_REPEAT_HOURS * 10):
+                        continue
+                    if required_prev_stage:
+                        previous_key = _stage_setting_key("marketing:inactive_reactivation", user_id, required_prev_stage)
+                        previous_age = await _setting_age_hours(ctx.db, previous_key)
+                        if previous_age is None or previous_age < min_gap_hours:
+                            break
+                    await notify_user(user_id, text, reply_markup=kb, bot=ctx.bot)
+                    await _mark_setting_ts(ctx.db, key)
+                    await _increment_setting_counter(ctx.db, f"analytics:funnel:reactivation:{stage_id}:sent")
+                    break
+            await asyncio.sleep(6 * 3600)
+        except Exception as exc:
+            logger.error("Inactive user reactivation job failed: %s", exc)
+            await asyncio.sleep(1800)
+
+
 async def remind_unclaimed_gift_links_job(ctx: BackgroundContext) -> None:
     from utils.helpers import notify_user, notify_admins
 
@@ -490,7 +752,7 @@ async def remind_unclaimed_gift_links_job(ctx: BackgroundContext) -> None:
 
 
 async def check_expiry_notifications(ctx: BackgroundContext) -> None:
-    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    from tariffs import get_by_id, get_minimal_by_price, is_trial_plan
     from kkbot.services.subscriptions import get_subscription_status
     from utils.helpers import notify_user
 
@@ -500,50 +762,148 @@ async def check_expiry_notifications(ctx: BackgroundContext) -> None:
             [InlineKeyboardButton(text="📦 Моя подписка", callback_data="back_to_subscriptions")],
         ]
     )
+    kb_buy_after_trial = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Выбрать тариф", callback_data="open_buy_menu")],
+            [InlineKeyboardButton(text="⚡ Как подключиться", callback_data="onboarding:start")],
+        ]
+    )
+    kb_trial_survey = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="👍 Всё нравится", callback_data="trial:feedback:ok")],
+            [InlineKeyboardButton(text="💸 Дороговато", callback_data="trial:feedback:price")],
+            [InlineKeyboardButton(text="😕 Не разобрался", callback_data="trial:feedback:setup")],
+            [InlineKeyboardButton(text="🆘 Нужна помощь", callback_data="support:start")],
+        ]
+    )
 
     while True:
         try:
             await asyncio.sleep(1800)
             users = await ctx.db.get_all_subscribers()
+            minimal_plan = get_minimal_by_price() or {}
+            minimal_price = float(minimal_plan.get("price_rub") or 0.0)
+            offer_line = f"\n\n💡 Подойдёт стартовый тариф от <b>{minimal_price:.0f} ₽</b>." if minimal_price > 0 else ""
 
             for user in users:
                 uid = user["user_id"]
                 status = await get_subscription_status(uid, db=ctx.db, panel=ctx.panel)
-                if not status.get("active") or status.get("is_frozen"):
+                if status.get("is_frozen"):
                     continue
 
                 expiry_dt = status.get("expiry_dt")
                 if not expiry_dt:
                     continue
 
+                plan_code = str((status.get("user") or {}).get("plan_text") or "").strip()
+                current_plan = get_by_id(plan_code) if plan_code else None
+                is_trial = is_trial_plan(current_plan) or plan_code.lower() == "trial"
+                if is_trial:
+                    trial_hours = _hours_since(user.get("join_date"))
+                    if (
+                        trial_hours is not None
+                        and trial_hours >= 24
+                        and await _setting_ts_due(ctx.db, _trial_followup_key(uid), repeat_hours=24 * 365)
+                    ):
+                        await notify_user(
+                            uid,
+                            "✨ <b>Как вам пробный тариф?</b>\n\n"
+                            "Если всё работает как нужно, можно заранее выбрать платный тариф и продолжить пользоваться VPN без паузы после окончания пробного периода.\n\n"
+                            "А если что-то мешает, просто нажмите подходящую кнопку ниже.",
+                            reply_markup=kb_trial_survey,
+                            bot=ctx.bot,
+                        )
+                        await _mark_setting_ts(ctx.db, _trial_followup_key(uid))
+                        await _increment_setting_counter(ctx.db, "analytics:funnel:trial:day1_followup:sent")
                 diff_sec = expiry_dt.timestamp() - time.time()
                 if diff_sec <= 0:
+                    expired_hours = abs(diff_sec) / 3600.0
+                    if (
+                        expired_hours >= Config.EXPIRED_SUBSCRIPTION_REACTIVATION_AFTER_HOURS
+                        and await _setting_ts_due(
+                            ctx.db,
+                            _expired_reactivation_key(uid),
+                            repeat_hours=Config.EXPIRED_SUBSCRIPTION_REACTIVATION_REPEAT_HOURS,
+                        )
+                    ):
+                        await notify_user(
+                            uid,
+                            (
+                                "🎁 <b>Пробный тариф закончился</b>\n\n"
+                                "Чтобы продолжить пользоваться VPN, выберите платный тариф.\n"
+                                "Подключение уже настроено, останется только оплатить."
+                                + offer_line
+                                if is_trial
+                                else "⌛ <b>Подписка закончилась</b>\n\n"
+                                "Продлите её сейчас, и доступ вернётся сразу, без новой настройки и поиска ссылки."
+                            ),
+                            reply_markup=kb_buy_after_trial if is_trial else kb_renew,
+                            bot=ctx.bot,
+                        )
+                        await _mark_setting_ts(ctx.db, _expired_reactivation_key(uid))
+                        await _increment_setting_counter(
+                            ctx.db,
+                            "analytics:funnel:trial:expired:sent" if is_trial else "analytics:funnel:renewal:expired:sent",
+                        )
+                    continue
+
+                if not status.get("active"):
                     continue
 
                 if diff_sec <= 3600 and not user.get("notified_1h"):
                     await notify_user(
                         uid,
-                        "⏰ <b>До истечения подписки остался 1 час!</b>\n\n"
-                        "Нажмите кнопку ниже, чтобы продлить без потери оставшихся дней.",
-                        reply_markup=kb_renew,
+                        (
+                            "⏰ <b>До конца пробного тарифа остался 1 час</b>\n\n"
+                            "Чтобы VPN продолжил работать без перерыва, выберите тариф заранее."
+                            + offer_line
+                            if is_trial
+                            else "⏰ <b>До окончания подписки остался 1 час</b>\n\n"
+                            "Продлите сейчас, чтобы не потерять доступ и не отвлекаться потом на повторное подключение."
+                        ),
+                        reply_markup=kb_buy_after_trial if is_trial else kb_renew,
                     )
                     await ctx.db.update_user(uid, notified_1h=1)
+                    await _increment_setting_counter(
+                        ctx.db,
+                        "analytics:funnel:trial:1h:sent" if is_trial else "analytics:funnel:renewal:1h:sent",
+                    )
                 elif diff_sec <= 86400 and not user.get("notified_1d"):
                     await notify_user(
                         uid,
-                        "⚠️ <b>До истечения подписки остался 1 день!</b>\n\n"
-                        "Продлите заранее — оставшиеся дни сохранятся.",
-                        reply_markup=kb_renew,
+                        (
+                            "⚠️ <b>Пробный тариф закончится через 1 день</b>\n\n"
+                            "Чтобы продолжить пользоваться VPN после пробного периода, выберите платный тариф."
+                            + offer_line
+                            if is_trial
+                            else "⚠️ <b>До окончания подписки остался 1 день</b>\n\n"
+                            "Продлите заранее: доступ сохранится, а оставшиеся дни не сгорят."
+                        ),
+                        reply_markup=kb_buy_after_trial if is_trial else kb_renew,
                     )
                     await ctx.db.update_user(uid, notified_1d=1)
+                    await _increment_setting_counter(
+                        ctx.db,
+                        "analytics:funnel:trial:1d:sent" if is_trial else "analytics:funnel:renewal:1d:sent",
+                    )
                 elif diff_sec <= 259200 and not user.get("notified_3d"):
                     await notify_user(
                         uid,
-                        "📅 <b>До истечения подписки осталось 3 дня.</b>\n\n"
-                        "Вы можете продлить прямо сейчас, не теряя текущий остаток.",
-                        reply_markup=kb_renew,
+                        (
+                            "📅 <b>До конца пробного тарифа осталось 3 дня</b>\n\n"
+                            "Если VPN вам подошёл, можно заранее выбрать тариф и продолжить пользоваться без паузы."
+                            + offer_line
+                            if is_trial
+                            else "📅 <b>До окончания подписки осталось 3 дня</b>\n\n"
+                            "Можно продлить уже сейчас и спокойно пользоваться дальше без риска остаться без доступа в неудобный момент."
+                        ),
+                        reply_markup=kb_buy_after_trial if is_trial else kb_renew,
                     )
                     await ctx.db.update_user(uid, notified_3d=1)
+                    await _increment_setting_counter(
+                        ctx.db,
+                        "analytics:funnel:trial:3d:sent" if is_trial else "analytics:funnel:renewal:3d:sent",
+                    )
 
         except Exception as exc:
             logger.error("Expiry notification job failed: %s", exc)
@@ -601,6 +961,8 @@ def build_job_specs() -> list[JobSpec]:
         JobSpec("remind_unpaid_referrals", remind_unpaid_referrals, settings.enable_referral_reminder_job),
         JobSpec("remind_unclaimed_gift_links_job", remind_unclaimed_gift_links_job, True),
         JobSpec("check_expiry_notifications", check_expiry_notifications, settings.enable_expiry_notifications_job),
+        JobSpec("remind_abandoned_payments_job", remind_abandoned_payments_job, settings.enable_abandoned_payment_reminder_job),
+        JobSpec("reactivate_inactive_users_job", reactivate_inactive_users_job, settings.enable_inactive_user_reactivation_job),
         JobSpec("health_monitor", health_monitor, settings.enable_health_monitor_job),
         JobSpec("auto_resolve_payment_attention_job", auto_resolve_payment_attention_job, getattr(settings, "enable_payment_attention_resolver_job", True)),
         JobSpec("sync_cidr_config_to_object_storage_job", sync_cidr_config_to_object_storage_job, getattr(settings, "enable_cidr_object_storage_sync_job", True)),
